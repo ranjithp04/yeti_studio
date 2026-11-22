@@ -106,6 +106,14 @@ impl DesktopApp {
                         log::warn!("{e}");
                     }
                     ui.hotkey_errors = errs;
+                    // Push-to-talk: the mic is live only while the key is held, so start
+                    // muted (otherwise it is open until the first press + release).
+                    if h.registered
+                        .iter()
+                        .any(|(_, a)| *a == crate::hotkeys::HotkeyAction::PushToTalk)
+                    {
+                        ui.set_muted(true);
+                    }
                     Some(h)
                 }
                 Err(e) => {

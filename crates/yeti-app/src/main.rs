@@ -1,3 +1,5 @@
+// Release builds on Windows: GUI subsystem (no console window next to the app).
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 //! Yeti Studio app entry point.
 //!
 //! The UI depends only on `Arc<dyn yeti_engine::Engine>`. Default engine: the real

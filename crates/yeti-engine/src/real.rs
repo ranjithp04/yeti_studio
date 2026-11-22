@@ -23,6 +23,15 @@ use yeti_types::{
 
 /// Default virtual-mic feed device on macOS (Phase 5 driver).
 pub const MAC_FEED_DEVICE: &str = "Yeti Studio Mic (Feed)";
+
+/// Callback buffer used when `EngineConfig::buffer_frames` is `None`. macOS: 128 frames
+/// (2.7 ms). Measured on the Yeti with `yeti-passthrough --probe` (Gaming/DFN): transport
+/// 36.7 ms at 128 vs 83.6 ms at the device default of 512, counters zero in both
+/// (docs/LATENCY.md). Elsewhere (WASAPI shared mode): device default.
+#[cfg(target_os = "macos")]
+pub const DEFAULT_BUFFER_FRAMES: Option<u32> = Some(128);
+#[cfg(not(target_os = "macos"))]
+pub const DEFAULT_BUFFER_FRAMES: Option<u32> = None;
 /// Default virtual-mic feed device on Windows (VB-CABLE).
 pub const WIN_FEED_DEVICE: &str = "CABLE Input";
 
@@ -159,6 +168,20 @@ impl YetiEngine {
         self.shared.control.bypass_chain.store(bypass, Relaxed);
     }
 
+    /// Live end-to-end latency probe (diagnostics, see [`crate::probe`]): replaces the mic
+    /// signal with an impulse train and plays **silence** on the main output while enabled.
+    pub fn set_latency_probe(&self, enabled: bool) {
+        let p = &self.shared.control.probe;
+        if enabled {
+            p.reset();
+        }
+        p.enabled.store(enabled, Relaxed);
+    }
+
+    pub fn latency_probe(&self) -> crate::probe::ProbeStats {
+        self.shared.control.probe.stats()
+    }
+
     pub fn diagnostics(&self) -> EngineDiagnostics {
         let t = &self.shared.control.telemetry;
         EngineDiagnostics {
@@ -262,6 +285,12 @@ impl Supervisor {
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
             }
             if self.sh.control.ab.take_ready() {
+                let skipped = self.sh.control.ab.skipped_blocks();
+                if skipped > 0 {
+                    self.sh.push(EngineEvent::Warning(format!(
+                        "A/B take has {skipped} gap(s) of 10 ms (UI held the take buffer)"
+                    )));
+                }
                 self.sh.push(EngineEvent::AbReady);
             }
 
@@ -302,8 +331,8 @@ impl Supervisor {
     }
 
     /// Main output when none is configured: the virtual mic ("Yeti Studio Mic (Feed)" on
-    /// macOS, VB-CABLE "CABLE Input" on Windows). macOS without the driver: the default
-    /// output plus a visible warning. Windows without VB-CABLE: no main output + warning.
+    /// macOS, VB-CABLE "CABLE Input" on Windows). Without the driver / VB-CABLE: no main
+    /// output plus a visible warning (`Some("default")` opts in to the default output).
     fn virtual_mic_output(&mut self, host: &cpal::Host) -> Option<OutputSel> {
         #[cfg(target_os = "macos")]
         {
@@ -324,13 +353,17 @@ impl Supervisor {
                 Err(YetiError::DeviceNotFound) => {}
                 Err(e) => log::warn!("virtual mic feed: {e}"),
             }
+            // No Feed: no main output (like Windows without VB-CABLE). Playing the live mic
+            // on the default output (speakers) risks feedback; that is opt-in only via
+            // `output_device = Some("default")` (app/passthrough `--output default`).
             self.sh.push(EngineEvent::Warning(
-                "Virtual mic \"Yeti Studio Mic\" is not installed: processed audio is playing \
-                 on the default output instead (use headphones to avoid feedback). Install it \
-                 with `cargo xtask bundle-mac`, then `cargo xtask install-driver`."
+                "Virtual mic \"Yeti Studio Mic\" is not installed: processed audio is not \
+                 sent anywhere (meters and \"hear myself\" still work). Install it with \
+                 `cargo xtask bundle-mac`, then `cargo xtask install-driver`, or start with \
+                 `--output default` to play it on the default output (use headphones)."
                     .to_string(),
             ));
-            Some(OutputSel::Default)
+            None
         }
         #[cfg(windows)]
         {
@@ -419,7 +452,7 @@ impl Supervisor {
             input,
             output,
             monitor,
-            buffer_frames: cfg.buffer_frames,
+            buffer_frames: cfg.buffer_frames.or(DEFAULT_BUFFER_FRAMES),
         };
         self.sh.control.telemetry.reset();
         match Pipeline::start(&spec, self.sh.control.clone()) {

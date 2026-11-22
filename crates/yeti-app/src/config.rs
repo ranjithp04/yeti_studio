@@ -29,10 +29,17 @@ pub struct HotkeyConfig {
     pub toggle_mini: String,
 }
 
+/// Default mute toggle. Windows: Ctrl+Alt+M, because Ctrl+Shift+M is Microsoft Teams' own
+/// mute shortcut and a registered global hotkey would swallow it system-wide.
+#[cfg(windows)]
+pub const DEFAULT_MUTE_HOTKEY: &str = "Ctrl+Alt+KeyM";
+#[cfg(not(windows))]
+pub const DEFAULT_MUTE_HOTKEY: &str = "CmdOrCtrl+Shift+M";
+
 impl Default for HotkeyConfig {
     fn default() -> Self {
         Self {
-            mute_toggle: "CmdOrCtrl+Shift+M".into(),
+            mute_toggle: DEFAULT_MUTE_HOTKEY.into(),
             push_to_talk: String::new(),
             show_window: "CmdOrCtrl+Shift+Y".into(),
             toggle_mini: "CmdOrCtrl+Shift+U".into(),
@@ -233,5 +240,11 @@ mod tests {
             assert!(s.contains('+'), "{s} must be a modifier combo");
             assert!(s.parse::<global_hotkey::hotkey::HotKey>().is_ok(), "{s}");
         }
+        // The Windows default (cfg'd out on other platforms) must parse too.
+        assert!(
+            "Ctrl+Alt+KeyM"
+                .parse::<global_hotkey::hotkey::HotKey>()
+                .is_ok()
+        );
     }
 }

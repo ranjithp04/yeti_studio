@@ -232,6 +232,10 @@ fn bundle_app(dist: &Path) -> Result<PathBuf, String> {
         "yeti-app",
         "--bin",
         APP_EXECUTABLE,
+        // Meeting preset's echo cancel (WebRTC AEC3) is opt-in at build time; the bundled
+        // macOS app ships with it (without it Meeting silently has no echo cancellation).
+        "--features",
+        "aec",
     ]);
     if run(c) != ExitCode::SUCCESS {
         return Err("app build failed".into());

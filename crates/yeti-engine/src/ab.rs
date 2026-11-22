@@ -3,10 +3,12 @@
 //!
 //! The handle side allocates the buffers (`record`); the DSP worker only copies into
 //! reserved capacity and never blocks: it uses `try_lock` and skips a block if the UI
-//! thread happens to hold the lock for its (tiny) critical section.
+//! thread happens to hold the lock for its (tiny) critical section. Skipped blocks (10 ms
+//! gaps in the take) are counted ([`AbRecorder::skipped_blocks`]) and reported by the
+//! engine with the `AbReady` event.
 
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
 use yeti_types::{AbState, AbVariant, ENGINE_SAMPLE_RATE, Result, YetiError};
 
 /// Longest take the UI may request.
@@ -32,6 +34,8 @@ pub struct AbRecorder {
     active: AtomicBool,
     /// Set by the worker when a recording completes; taken by the supervisor (`AbReady`).
     ready: AtomicBool,
+    /// Blocks dropped from the current take because the lock was busy.
+    skipped: AtomicU64,
     inner: Mutex<Inner>,
 }
 
@@ -40,6 +44,7 @@ impl Default for AbRecorder {
         Self {
             active: AtomicBool::new(false),
             ready: AtomicBool::new(false),
+            skipped: AtomicU64::new(0),
             inner: Mutex::new(Inner {
                 raw: Vec::new(),
                 clean: Vec::new(),
@@ -69,6 +74,7 @@ impl AbRecorder {
         g.clean = clean;
         g.total = total;
         g.phase = Phase::Recording;
+        self.skipped.store(0, Relaxed);
         self.ready.store(false, Relaxed);
         self.active.store(true, Relaxed);
         Ok(())
@@ -134,6 +140,11 @@ impl AbRecorder {
         }
     }
 
+    /// 10 ms blocks missing from the current / last take (lock contention with the UI).
+    pub fn skipped_blocks(&self) -> u64 {
+        self.skipped.load(Relaxed)
+    }
+
     /// A recording finished since the last call.
     pub fn take_ready(&self) -> bool {
         self.ready.swap(false, Relaxed)
@@ -147,6 +158,8 @@ impl AbRecorder {
             return;
         }
         let Ok(mut g) = self.inner.try_lock() else {
+            // May also count while playing (after the take was reported); reset by `record`.
+            self.skipped.fetch_add(1, Relaxed);
             return;
         };
         if g.phase != Phase::Recording {

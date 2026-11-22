@@ -1,12 +1,18 @@
 //! `yeti-passthrough`: run the real engine for N seconds and print counters, RMS, drift.
 //!
 //! ```text
-//! yeti-passthrough [--seconds N] [--input NAME] [--output NAME|yeti|default|none] [--audible]
+//! yeti-passthrough [--seconds N] [--input NAME] [--output NAME|yeti|auto|default|none] [--audible]
 //!                  [--monitor] [--bypass] [--reference] [--buffer FRAMES]
+//!                  [--preset gaming|meeting] [--ns dfn|rnnoise] [--probe]
 //! ```
-//! Defaults: 10 s, output = Yeti headphone jack with **software mute on** (the full graph,
-//! rings and drift bridge run, but silence is written) so nothing can feed back into the mic.
-//! `--audible` unmutes. Exit code 0 only if xruns/overruns/underruns are all zero.
+//! Defaults: 10 s, Gaming preset, output = Yeti headphone jack with **software mute on** (the
+//! full graph, rings and drift bridge run, but silence is written) so nothing can feed back
+//! into the mic. `--audible` unmutes. Exit code 0 only if xruns/overruns/underruns are all zero.
+//!
+//! `--probe`: live end-to-end latency measurement (see `yeti_engine::probe`). The mic signal is
+//! replaced by an impulse train, the voice chain still runs (CPU), the output plays silence,
+//! and the impulse's host-clock capture → playback time is reported, plus the chain's
+//! algorithmic delay. CPU % is the DSP worker's share of one core (chain + resamplers).
 
 use std::time::{Duration, Instant};
 use yeti_engine::{Engine, EngineConfig, YetiEngine};
@@ -33,6 +39,8 @@ fn main() {
         .unwrap_or(10.0);
     let output = match arg("--output").as_deref() {
         None | Some("yeti") => Some(yeti_device::YETI_NAME.to_string()),
+        // Automatic routing (as the app): virtual mic, or nothing if it is not installed.
+        Some("auto") => None,
         Some(o) => Some(o.to_string()),
     };
     let cfg = EngineConfig {
@@ -47,8 +55,33 @@ fn main() {
         capture_reference: flag("--reference").then_some(true),
     };
     let e = YetiEngine::new();
+    let preset = match arg("--preset").as_deref() {
+        None | Some("gaming") => yeti_types::Preset::Gaming,
+        Some("meeting") => yeti_types::Preset::Meeting,
+        Some(o) => {
+            eprintln!("unknown --preset {o:?} (gaming|meeting)");
+            std::process::exit(2);
+        }
+    };
+    let mut params = yeti_types::DspParams::for_preset(preset);
+    match arg("--ns").as_deref() {
+        None => {}
+        Some("dfn") => params.noise.model = yeti_types::NoiseModel::DeepFilterNet,
+        Some("rnnoise") => params.noise.model = yeti_types::NoiseModel::RnNoise,
+        Some(o) => {
+            eprintln!("unknown --ns {o:?} (dfn|rnnoise)");
+            std::process::exit(2);
+        }
+    }
+    e.set_params(params);
     e.set_bypass_chain(flag("--bypass"));
     e.set_muted(!flag("--audible"));
+    let probe = flag("--probe");
+    e.set_latency_probe(probe);
+    println!(
+        "preset {preset:?}, noise model {:?}, echo cancel {}, probe {probe}",
+        params.noise.model, params.echo_cancel.enabled
+    );
     if flag("--monitor") {
         e.set_monitor(yeti_types::MonitorSettings {
             enabled: true,
@@ -147,7 +180,7 @@ fn main() {
     println!("output underruns     : {}", s.counters.output_underruns);
     println!("output overruns      : {}", d.output_overruns);
     println!(
-        "output ring resyncs  : {} (startup re-centre counts as 1)",
+        "output ring resyncs  : {} (startup fill excluded; expected 0)",
         d.output_resyncs
     );
     println!("reference underruns  : {}", s.counters.reference_underruns);
@@ -166,6 +199,20 @@ fn main() {
         "latency est. / cpu   : {:.1} ms / {:.2} %",
         s.latency_ms, s.cpu_percent
     );
+    if probe {
+        let p = e.latency_probe();
+        let chain = s.dsp_latency_ms as f64;
+        println!(
+            "MEASURED transport   : mean {:.1} ms, min {:.1}, max {:.1} (n={}, lost {})",
+            p.mean_ms, p.min_ms, p.max_ms, p.count, p.lost
+        );
+        println!(
+            "MEASURED end-to-end  : {:.1} ms (= transport {:.1} + chain algorithmic {:.1})",
+            p.mean_ms + chain,
+            p.mean_ms,
+            chain
+        );
+    }
     if d.reference_active || flag("--reference") {
         println!(
             "reference max peak   : {:.1} dBFS (excludes own process: {})",

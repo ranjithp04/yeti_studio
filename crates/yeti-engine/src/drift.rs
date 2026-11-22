@@ -36,11 +36,16 @@ pub struct DriftConfig {
 impl DriftConfig {
     /// Defaults suitable for 48 kHz rings with 5–25 ms target fill. Corrects USB-class
     /// clock offsets (≤ ±1000 ppm) within a few seconds without audible pitch modulation.
+    ///
+    /// Loop (fill' = 48000·(r−1), r−1 = −(kp·e + ∫ki·e)): ωn = √(48000·ki) ≈ 0.22 rad/s,
+    /// ζ = 48000·kp / (2ωn) ≈ 1.1 (the 0.5 s fill low-pass lowers the effective damping).
+    /// Was kp 2e-6 / ki 4e-7 (ωn 0.14, ζ 0.35), which let the fill wander by ±300 frames
+    /// with a ~45 s period in live runs.
     pub fn for_target(target_fill: f64) -> Self {
         Self {
             target_fill,
-            kp: 2.0e-6,
-            ki: 4.0e-7,
+            kp: 1.0e-5,
+            ki: 1.0e-6,
             smoothing_s: 0.5,
             max_correction: 0.005,
             integral_band: (target_fill * 0.25).max(240.0),
@@ -284,6 +289,38 @@ mod tests {
         );
         assert!(min_fill > target - 200.0, "overshoot to {min_fill}");
         assert!((ctl.ratio() - 1.0).abs() < 50e-6, "ratio {}", ctl.ratio());
+    }
+
+    #[test]
+    fn step_response_is_well_damped() {
+        // 300 frames above target, no clock offset: settles within 30 s and does not swing
+        // below the target by more than the callback-granularity ripple (~45 frames).
+        let target = 1344.0;
+        let mut ctl = DriftController::new(DriftConfig::for_target(target));
+        let mut fill: f64 = target + 300.0;
+        let (mut p, mut c) = (0.0, 0.0);
+        let mut min_fill = f64::MAX;
+        for ms in 0..60_000 {
+            p += 48.0;
+            while p >= 480.0 {
+                p -= 480.0;
+                fill += 480.0 * ctl.ratio();
+                ctl.update(fill, 0.01);
+            }
+            c += 48.0;
+            if c >= 512.0 {
+                c -= 512.0;
+                fill -= 512.0;
+            }
+            if ms > 2_000 {
+                min_fill = min_fill.min(ctl.smoothed_fill().unwrap());
+            }
+            if ms == 30_000 {
+                let e = ctl.smoothed_fill().unwrap() - target;
+                assert!(e.abs() < 30.0, "not settled at 30 s: error {e}");
+            }
+        }
+        assert!(min_fill > target - 55.0, "overshoot to {min_fill}");
     }
 
     #[test]

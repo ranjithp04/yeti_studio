@@ -26,6 +26,7 @@ pub mod mac_feed;
 pub mod mac_tap;
 mod mock;
 pub mod pipeline;
+pub mod probe;
 mod real;
 pub mod resample;
 mod rt_priority;
@@ -35,7 +36,9 @@ pub mod telemetry;
 pub mod windows_routing;
 
 pub use mock::MockEngine;
-pub use real::{EngineDiagnostics, MAC_FEED_DEVICE, WIN_FEED_DEVICE, YetiEngine};
+pub use real::{
+    DEFAULT_BUFFER_FRAMES, EngineDiagnostics, MAC_FEED_DEVICE, WIN_FEED_DEVICE, YetiEngine,
+};
 
 /// Where audio goes. `None` fields = automatic choice.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -45,15 +48,16 @@ pub struct EngineConfig {
     /// Virtual mic feed device (name, substring match); `None` = platform default
     /// (mac: "Yeti Studio Mic (Feed)", opened by UID through a private aggregate because the
     /// driver hides it; win: "CABLE Input (VB-Audio Virtual Cable)"). If it is not installed a
-    /// `Warning` event is queued and: mac → the system default output is used instead;
-    /// win → no main output (VB-CABLE install message).
+    /// `Warning` event is queued and no main output is used (mac: install hint; win: VB-CABLE
+    /// install message). Playing on speakers is opt-in only (`Some("default")`).
     /// Special values: `"default"` = system default output, `"none"` = no main output.
     pub output_device: Option<String>,
     /// Monitor ("hear myself") device; `None` = Yeti headphone output (`"none"` / `"default"`
     /// as for `output_device`). The stream runs while the engine runs; audio is only sent
     /// while `MonitorSettings::enabled`.
     pub monitor_device: Option<String>,
-    /// Callback buffer size in frames; `None` = device default.
+    /// Callback buffer size in frames; `None` = [`DEFAULT_BUFFER_FRAMES`] (macOS 128, else
+    /// the device default).
     pub buffer_frames: Option<u32>,
     /// Loopback reference capture (AEC far end): `None` = automatic (echo cancel enabled
     /// and `aec` compiled in), `Some(b)` = force on/off (diagnostics).

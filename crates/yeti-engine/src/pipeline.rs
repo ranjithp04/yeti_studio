@@ -36,6 +36,8 @@ pub struct Control {
     pub telemetry: Telemetry,
     /// A/B test recorder (raw + cleaned takes, playback through the monitor).
     pub ab: crate::ab::AbRecorder,
+    /// Live end-to-end latency probe (diagnostics).
+    pub probe: crate::probe::LatencyProbe,
 }
 
 impl Control {
@@ -48,6 +50,7 @@ impl Control {
             bypass_chain: AtomicBool::new(false),
             telemetry: Telemetry::default(),
             ab: crate::ab::AbRecorder::default(),
+            probe: crate::probe::LatencyProbe::default(),
         }
     }
 }
@@ -164,6 +167,7 @@ fn spawn_tone(
 type OpenedOutput = (
     cpal::Stream,
     rtrb::Producer<f32>,
+    Arc<AtomicBool>,
     String,
     u32,
     Option<u32>,
@@ -266,23 +270,48 @@ where
     let ch = cfg.channels.max(1) as usize;
     let inv = 1.0 / ch as f32;
     let c2 = control.clone();
+    let rate = cfg.sample_rate.max(1) as u64;
+    let probe_period = (crate::probe::PROBE_PERIOD_S * rate as f64) as usize;
+    let mut probe_countdown = 0usize;
     dev.build_input_stream::<T, _, _>(
         cfg,
-        move |data: &[T], _info| {
+        move |data: &[T], info: &cpal::InputCallbackInfo| {
             assert_no_alloc(|| {
                 let frames = data.len() / ch;
                 let n = frames.min(prod.slots());
                 if n < frames && count_overruns {
                     c2.telemetry.capture_overruns.fetch_add(1, Relaxed);
                 }
-                if let Ok(chunk) = prod.write_chunk_uninit(n) {
-                    chunk.fill_from_iter(data.chunks_exact(ch).map(|f| {
-                        let mut s = 0.0f32;
-                        for &x in f {
-                            s += f32::from_sample(x);
+                // Latency probe (main capture only): silence + one impulse per period.
+                let probing = count_overruns && c2.probe.enabled.load(Relaxed);
+                let mut impulse_at = usize::MAX;
+                if probing {
+                    if probe_countdown < n {
+                        let t0 = info.timestamp().capture.as_nanos() as u64;
+                        let t = t0 + probe_countdown as u64 * 1_000_000_000 / rate;
+                        if c2.probe.can_fire(t) {
+                            impulse_at = probe_countdown;
+                            c2.probe.fired(t);
                         }
-                        s * inv
-                    }));
+                        probe_countdown = probe_period;
+                    } else {
+                        probe_countdown -= n;
+                    }
+                }
+                if let Ok(chunk) = prod.write_chunk_uninit(n) {
+                    if probing {
+                        chunk.fill_from_iter(
+                            (0..n).map(|i| if i == impulse_at { 1.0 } else { 0.0 }),
+                        );
+                    } else {
+                        chunk.fill_from_iter(data.chunks_exact(ch).map(|f| {
+                            let mut s = 0.0f32;
+                            for &x in f {
+                                s += f32::from_sample(x);
+                            }
+                            s * inv
+                        }));
+                    }
                 }
             })
         },
@@ -296,6 +325,7 @@ fn build_playback<T>(
     dev: &cpal::Device,
     cfg: StreamConfig,
     mut cons: rtrb::Consumer<f32>,
+    started: Arc<AtomicBool>,
     control: Arc<Control>,
     health: Arc<Health>,
     count_underruns: bool,
@@ -305,16 +335,38 @@ where
 {
     let ch = cfg.channels.max(1) as usize;
     let c2 = control.clone();
+    let rate = cfg.sample_rate.max(1) as u64;
+    // Underruns only count once the DSP worker has started feeding this stream (the worker
+    // waits for `started`, then fills the ring to its target in one go).
+    let mut primed = false;
     dev.build_output_stream::<T, _, _>(
         cfg,
-        move |data: &mut [T], _info| {
+        move |data: &mut [T], info: &cpal::OutputCallbackInfo| {
             assert_no_alloc(|| {
+                started.store(true, Relaxed);
                 let frames = data.len() / ch;
                 let n = frames.min(cons.slots());
+                primed |= n > 0;
+                let probing = count_underruns && c2.probe.enabled.load(Relaxed);
                 if let Ok(chunk) = cons.read_chunk(n) {
                     let (a, b) = chunk.as_slices();
-                    for (frame, &v) in data.chunks_exact_mut(ch).zip(a.iter().chain(b)) {
-                        frame.fill(T::from_sample(v));
+                    if probing {
+                        // Find the impulse, play silence.
+                        if let Some(j) = a
+                            .iter()
+                            .chain(b)
+                            .position(|v| *v > crate::probe::PROBE_THRESHOLD)
+                        {
+                            let t0 = info.timestamp().playback.as_nanos() as u64;
+                            c2.probe.arrived(t0 + j as u64 * 1_000_000_000 / rate);
+                        }
+                        for s in &mut data[..n * ch] {
+                            *s = T::EQUILIBRIUM;
+                        }
+                    } else {
+                        for (frame, &v) in data.chunks_exact_mut(ch).zip(a.iter().chain(b)) {
+                            frame.fill(T::from_sample(v));
+                        }
                     }
                     chunk.commit_all();
                 }
@@ -322,7 +374,7 @@ where
                     for s in &mut data[n * ch..] {
                         *s = T::EQUILIBRIUM;
                     }
-                    if count_underruns {
+                    if count_underruns && primed {
                         c2.telemetry.output_underruns.fetch_add(1, Relaxed);
                     }
                 }
@@ -367,6 +419,10 @@ fn fmt_ok(f: SampleFormat) -> SampleFormat {
 
 struct OutputPath {
     prod: rtrb::Producer<f32>,
+    /// Set by the output callback on its first call.
+    started: Arc<AtomicBool>,
+    /// The worker has fed this ring at least once (startup fill done).
+    feeding: bool,
     stage: OutputStage,
     ctl: DriftController,
     buf: Vec<f32>,
@@ -377,10 +433,17 @@ struct OutputPath {
 }
 
 impl OutputPath {
-    fn new(prod: rtrb::Producer<f32>, out_rate: u32, target: usize) -> Result<Self> {
+    fn new(
+        prod: rtrb::Producer<f32>,
+        started: Arc<AtomicBool>,
+        out_rate: u32,
+        target: usize,
+    ) -> Result<Self> {
         let stage = OutputStage::new(ENGINE_SAMPLE_RATE, out_rate)?;
         let buf = vec![0.0; stage.max_output() + 16];
         Ok(Self {
+            started,
+            feeding: false,
             capacity: prod.buffer().capacity(),
             prod,
             stage,
@@ -405,13 +468,38 @@ impl OutputPath {
     }
 
     /// Resample one block into the ring. Hard re-centres the ring when it is far off target
-    /// (consumer drained it → insert silence; startup burst / stall recovery → drop the
-    /// block) so the drift controller only ever sees small, slow errors.
+    /// (consumer drained it → insert silence; stall recovery → drop the block) so the drift
+    /// controller only ever sees small, slow errors.
+    ///
+    /// Startup: blocks are discarded until the device callback has started; the first block
+    /// after that fills the (still empty) ring to the target in one go. This is not counted
+    /// as a resync and avoids the startup burst (capture running before the output device).
     fn push(&mut self, block: &[f32]) -> PushResult {
+        let mut res = PushResult::default();
+        if !self.feeding {
+            if !self.started.load(Relaxed) {
+                return res;
+            }
+            self.feeding = true;
+            self.ctl.reset();
+            let n = self.stage.process(block, &mut self.buf).unwrap_or(0);
+            let target = self.ctl.config().target_fill as usize;
+            let pad = target
+                .saturating_sub(self.fill() + n)
+                .min(self.zeros.len())
+                .min(self.prod.slots());
+            let _ = self.prod.push_entire_slice(&self.zeros[..pad]);
+            let (_, rest) = self.prod.push_partial_slice(&self.buf[..n]);
+            res.overflow = rest.len();
+            self.ctl.update(
+                self.fill() as f64,
+                BLOCK_FRAMES as f64 / ENGINE_SAMPLE_RATE as f64,
+            );
+            return res;
+        }
         let n = self.stage.process(block, &mut self.buf).unwrap_or(0);
         let target = self.ctl.config().target_fill as usize;
         let before = self.fill();
-        let mut res = PushResult::default();
         if before == 0 {
             let pad = target
                 .saturating_sub(n)
@@ -524,12 +612,14 @@ impl Pipeline {
                 .map_err(|e| map_build_err(e, "output config"))?;
             let cfg = stream_config(&sc, spec.buffer_frames);
             let (prod, cons) = rtrb::RingBuffer::<f32>::new(cfg.sample_rate as usize / 4);
+            let started = Arc::new(AtomicBool::new(false));
             let s = by_format!(
                 fmt_ok(sc.sample_format()),
                 build_playback,
                 &dev,
                 cfg,
                 cons,
+                started.clone(),
                 control.clone(),
                 health.clone(),
                 count_underruns
@@ -538,6 +628,7 @@ impl Pipeline {
             Ok(Some((
                 s,
                 prod,
+                started,
                 dev_name(&dev),
                 cfg.sample_rate,
                 buf,
@@ -564,21 +655,21 @@ impl Pipeline {
             b + blk + in_at_rate / 2 + rate as usize / 500 // + 2 ms
         };
         let mut out_path = None;
-        if let Some((s, prod, name, rate, buf, chans)) = out {
+        if let Some((s, prod, started, name, rate, buf, chans)) = out {
             let t = target_for(rate, buf);
             info.output_name = Some(name);
             info.output_rate = rate;
             info.output_buffer = buf;
             info.output_target_fill = t as u32;
             info.output_channels = chans;
-            out_path = Some(OutputPath::new(prod, rate, t)?);
+            out_path = Some(OutputPath::new(prod, started, rate, t)?);
             streams.push(s);
         }
         let mut mon_path = None;
-        if let Some((s, prod, name, rate, buf, _)) = mon {
+        if let Some((s, prod, started, name, rate, buf, _)) = mon {
             info.monitor_name = Some(name);
             info.monitor_rate = rate;
-            mon_path = Some(OutputPath::new(prod, rate, target_for(rate, buf))?);
+            mon_path = Some(OutputPath::new(prod, started, rate, target_for(rate, buf))?);
             streams.push(s);
         }
 
@@ -632,15 +723,10 @@ impl Pipeline {
             t_chain.elapsed().as_secs_f64() * 1000.0
         );
 
-        for s in &streams {
-            s.play().map_err(|e| map_build_err(e, "play"))?;
-        }
-        let tone = match tone_prod {
-            Some(p) => Some(spawn_tone(p, stop.clone(), control.clone()).map_err(backend)?),
-            None => None,
-        };
-        Ok(Self {
-            tone,
+        // Build `Self` before playing: on a play / tone-spawn error below, `Drop` stops and
+        // joins the DSP worker instead of leaking it.
+        let mut p = Self {
+            tone: None,
             streams,
             loopback: None,
             #[cfg(target_os = "macos")]
@@ -652,7 +738,15 @@ impl Pipeline {
             health,
             info,
             control,
-        })
+        };
+        // Outputs first (they discard silently until fed), then capture.
+        for s in p.streams.iter().rev() {
+            s.play().map_err(|e| map_build_err(e, "play"))?;
+        }
+        if let Some(tp) = tone_prod {
+            p.tone = Some(spawn_tone(tp, p.stop.clone(), p.control.clone()).map_err(backend)?);
+        }
+        Ok(p)
     }
 
     /// Start/stop capture of the system output as AEC far-end reference.
@@ -820,9 +914,6 @@ impl DspWorker {
         };
         let chain_latency = chain.latency_ms();
         tel.dsp_latency_ms.set(chain_latency);
-        if let Some(o) = &mut self.out {
-            o.prefill();
-        }
         let mut mon_on = false;
         // After the (slow, allocating) model load: run with real-time scheduling.
         if !crate::rt_priority::promote_current_thread(10.0, 5.0) {
@@ -919,7 +1010,10 @@ impl DspWorker {
             };
             // A/B take: cleaned audio before the software mute.
             c.ab.on_block(&raw, &block);
-            if params.output_muted {
+            if c.probe.enabled.load(Relaxed) {
+                // Latency probe: the chain ran (CPU), forward the impulse train unchanged.
+                block.copy_from_slice(&raw);
+            } else if params.output_muted {
                 block.fill(0.0);
             }
 
