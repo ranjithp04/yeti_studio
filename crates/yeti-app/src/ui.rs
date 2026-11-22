@@ -10,7 +10,7 @@ use crate::widgets::{self, card, choice_card, muted, section_label, switch};
 use eframe::egui::{self, Align, Layout, RichText, Ui, vec2};
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use yeti_engine::Engine;
 use yeti_types::{
     AbState, AbVariant, DeviceCommand, DeviceEvent, DeviceState, DspParams, EngineEvent,
@@ -41,6 +41,10 @@ pub const FIRST_RUN_TIP: &str = "Before you start: turn OFF noise suppression in
 then pick \"Yeti Studio Mic\" as the microphone there. Double processing makes voices sound robotic.";
 
 const MAX_NOTICES: usize = 3;
+/// Raw input peak at or above this counts as clipping.
+const CLIP_DBFS: f32 = -0.5;
+/// How long the clipping warning stays after the last clipped block.
+const CLIP_HOLD: Duration = Duration::from_secs(3);
 
 /// All UI state. Engine is the source of truth for DSP params, mute, monitor and device;
 /// `config` holds UI preferences and is refreshed from the engine before saving.
@@ -70,6 +74,14 @@ pub struct YetiUi {
     ab: AbState,
     wave: WaveformSnapshot,
     aec_available: bool,
+
+    // --- input safety + speech-only metrics ---
+    /// Allow the digital gain slider above 0 dB (session only).
+    gain_unlocked: bool,
+    /// Show the clipping warning until this instant.
+    clip_until: Option<Instant>,
+    /// Noise reduction smoothed over frames where the user is talking.
+    speech_nr_db: Option<f32>,
 }
 
 impl YetiUi {
@@ -102,6 +114,9 @@ impl YetiUi {
             ab: AbState::Idle,
             wave: WaveformSnapshot::default(),
             aec_available: engine.aec_available(),
+            gain_unlocked: false,
+            clip_until: None,
+            speech_nr_db: None,
             config,
             engine,
         };
@@ -258,6 +273,8 @@ impl YetiUi {
         self.device = self.engine.device_state();
         self.ab = self.engine.ab_state();
         self.engine.waveform(&mut self.wave);
+        log_stats_if_enabled(&self.stats);
+        self.update_input_safety();
     }
 
     /// Apply the theme preference to the context when it changed.
@@ -515,7 +532,7 @@ impl YetiUi {
                 muted(
                     ui,
                     p,
-                    format!("Noise removed: {:.0} dB", self.meters.noise_reduction_db),
+                    format!("Noise removed while talking: {}", self.speech_nr_text()),
                 );
                 muted(ui, p, format!("Delay: {:.0} ms", self.stats.latency_ms));
             });
@@ -590,6 +607,13 @@ impl YetiUi {
         let dev = self.device.clone().unwrap_or_default();
         let (lo, hi) = dev.input_gain_range_db.unwrap_or((-12.0, 30.0));
         let mut g = dev.input_gain_db.unwrap_or(0.0);
+        // Above 0 dB the Yeti clips easily: cap the slider unless the user unlocks it.
+        // Keep a value already above the cap visible (it is shown, not changed).
+        let hi = if self.gain_unlocked {
+            hi
+        } else {
+            hi.min(0.0).max(g).max(lo)
+        };
         let lbl = ui
             .horizontal(|ui| {
                 let l = muted(ui, p, label);
@@ -616,6 +640,67 @@ impl YetiUi {
         if r.changed() {
             self.device_command(DeviceCommand::SetInputGainDb(g));
         }
+        if enabled && dev.input_gain_range_db.is_none_or(|(_, h)| h > 0.0) {
+            ui.horizontal(|ui| {
+                let mut unlocked = self.gain_unlocked;
+                if ui
+                    .checkbox(
+                        &mut unlocked,
+                        RichText::new("Allow boost above 0 dB")
+                            .size(12.0)
+                            .color(p.muted),
+                    )
+                    .changed()
+                {
+                    self.gain_unlocked = unlocked;
+                }
+            });
+            if g > 0.0 {
+                ui.label(
+                    RichText::new(
+                        "Digital boost on: turn the GAIN knob up instead to avoid clipping.",
+                    )
+                    .size(12.0)
+                    .color(p.warn),
+                );
+            }
+        }
+    }
+
+    /// Track input clipping (raw peak ≥ −0.5 dBFS) and speech-only noise reduction.
+    fn update_input_safety(&mut self) {
+        let m = &self.meters;
+        if m.input_peak_db >= CLIP_DBFS {
+            self.clip_until = Some(Instant::now() + CLIP_HOLD);
+        }
+        if m.gate_open && m.voice_probability >= 0.5 {
+            let v = m.noise_reduction_db.max(0.0);
+            self.speech_nr_db = Some(match self.speech_nr_db {
+                Some(x) => x + 0.05 * (v - x),
+                None => v,
+            });
+        }
+    }
+
+    fn is_clipping(&self) -> bool {
+        self.clip_until.is_some_and(|t| Instant::now() < t)
+    }
+
+    fn clip_warning(&self, ui: &mut Ui, p: &Palette) {
+        if self.is_clipping() {
+            ui.label(
+                RichText::new("Input clipping: turn the Yeti GAIN knob down")
+                    .size(12.0)
+                    .strong()
+                    .color(p.warn),
+            );
+        }
+    }
+
+    fn speech_nr_text(&self) -> String {
+        self.speech_nr_db
+            .map(|v| format!("{v:.0} dB"))
+            .unwrap_or_else(|| "–".into())
     }
 
     fn monitor_switch(&mut self, ui: &mut Ui, p: &Palette) {
@@ -644,6 +729,7 @@ impl YetiUi {
                 p.accent,
                 10.0,
             );
+            self.clip_warning(ui, p);
             self.gain_slider(ui, p, "Mic gain");
         });
 
@@ -1031,6 +1117,7 @@ impl YetiUi {
 
     fn levels_ui(&mut self, ui: &mut Ui, p: &Palette) {
         ui.label(RichText::new("Levels").size(14.0).strong());
+        self.clip_warning(ui, p);
         let m = self.meters;
         for (label, db, color) in [
             ("Mic in", m.input_rms_db, p.raw_meter),
@@ -1052,8 +1139,8 @@ impl YetiUi {
             ui,
             p,
             format!(
-                "Noise removed: {:.0} dB · Gain: {:+.1} dB · Gate: {} · Voice: {:.0}%",
-                m.noise_reduction_db,
+                "Noise removed while talking: {} · Gain: {:+.1} dB · Gate: {} · Voice: {:.0}%",
+                self.speech_nr_text(),
                 m.gain_change_db,
                 if m.gate_open { "open" } else { "closed" },
                 m.voice_probability * 100.0
@@ -1365,6 +1452,30 @@ pub fn output_device_name() -> &'static str {
     }
 }
 
+/// Diagnostics: with `YETI_STATS_LOG=1`, log engine stats/counters every 2 s (only while the UI refreshes).
+fn log_stats_if_enabled(stats: &yeti_types::EngineStats) {
+    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+    use std::time::Instant;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    static START: OnceLock<Instant> = OnceLock::new();
+    static LAST: AtomicU64 = AtomicU64::new(0);
+    if !*ENABLED.get_or_init(|| std::env::var_os("YETI_STATS_LOG").is_some()) {
+        return;
+    }
+    let secs = START.get_or_init(Instant::now).elapsed().as_secs();
+    if secs >= LAST.load(Relaxed) + 2 {
+        LAST.store(secs, Relaxed);
+        log::info!(
+            "stats t={secs}s lat={:.1}ms cpu={:.1}% drift={:.6} counters={:?}",
+            stats.latency_ms,
+            stats.cpu_percent,
+            stats.drift_ratio,
+            stats.counters
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1374,6 +1485,42 @@ mod tests {
         assert_eq!(hotkey_display(""), "Off");
         let s = hotkey_display("CmdOrCtrl+Shift+KeyM");
         assert!(s == "Cmd+Shift+M" || s == "Ctrl+Shift+M", "{s}");
+    }
+
+    fn ui() -> YetiUi {
+        let e = std::sync::Arc::new(yeti_engine::MockEngine::new());
+        YetiUi::new(e, AppConfig::default())
+    }
+
+    #[test]
+    fn clipping_warning_holds_then_clears() {
+        let mut u = ui();
+        u.meters.input_peak_db = -6.0;
+        u.update_input_safety();
+        assert!(!u.is_clipping());
+        u.meters.input_peak_db = -0.2;
+        u.update_input_safety();
+        assert!(u.is_clipping());
+        u.clip_until = Some(Instant::now() - Duration::from_millis(1));
+        assert!(!u.is_clipping());
+    }
+
+    #[test]
+    fn noise_removed_only_counts_speech() {
+        let mut u = ui();
+        assert_eq!(u.speech_nr_text(), "–");
+        // Gate closed (silence): huge reduction must be ignored.
+        u.meters.gate_open = false;
+        u.meters.voice_probability = 0.0;
+        u.meters.noise_reduction_db = 80.0;
+        u.update_input_safety();
+        assert_eq!(u.speech_nr_text(), "–");
+        // Talking: tracked.
+        u.meters.gate_open = true;
+        u.meters.voice_probability = 0.9;
+        u.meters.noise_reduction_db = 6.0;
+        u.update_input_safety();
+        assert_eq!(u.speech_nr_text(), "6 dB");
     }
 
     #[test]

@@ -930,6 +930,7 @@ impl DspWorker {
         let mut cpu_avg = 0.0f32;
         let (mut bucket_raw, mut bucket_clean, mut bucket_n) = (0.0f32, 0.0f32, 0usize);
         let block_s = BLOCK_FRAMES as f32 / ENGINE_SAMPLE_RATE as f32;
+        let mut tone_phase = 0.0f64;
 
         while !self.stop.load(Relaxed) {
             // Reference (loopback) source changes.
@@ -963,6 +964,16 @@ impl DspWorker {
             let _ = self.cap.pop_entire_slice(&mut in_buf[..need]);
             if self.input_stage.process(&in_buf[..need], &mut raw).is_err() {
                 continue;
+            }
+            // Diagnostics: YETI_TEST_TONE=<hz> replaces the capture with a phase-continuous sine.
+            if let Some(hz) = test_tone_hz() {
+                for v in raw.iter_mut() {
+                    *v = 0.25 * (tone_phase as f32).sin();
+                    tone_phase += std::f64::consts::TAU * hz / ENGINE_SAMPLE_RATE as f64;
+                    if tone_phase > std::f64::consts::TAU {
+                        tone_phase -= std::f64::consts::TAU;
+                    }
+                }
             }
 
             let g = c.params_gen.load(Relaxed);
@@ -1094,4 +1105,10 @@ impl DspWorker {
             tel.latency_ms.set(lat * 1000.0);
         }
     }
+}
+
+/// Diagnostics: `YETI_TEST_TONE=<hz>` (read once).
+fn test_tone_hz() -> Option<f64> {
+    static HZ: std::sync::OnceLock<Option<f64>> = std::sync::OnceLock::new();
+    *HZ.get_or_init(|| std::env::var("YETI_TEST_TONE").ok()?.parse().ok())
 }
