@@ -339,7 +339,8 @@ impl YetiUi {
             .inner_margin(3)
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
-                ui.horizontal(|ui| {
+                // Explicit left-to-right: the header places this inside a right-to-left layout.
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                     for (t, label) in [
                         (Theme::Light, "Light"),
                         (Theme::Dark, "Dark"),
@@ -763,10 +764,7 @@ impl YetiUi {
             } else {
                 "Mini window"
             };
-            if ui
-                .link(RichText::new(mini).size(12.5).color(p.muted))
-                .clicked()
-            {
+            if ui.link(RichText::new(mini).color(p.accent)).clicked() {
                 self.requests.push(Command::ToggleMini);
             }
         });
@@ -1268,14 +1266,26 @@ impl YetiUi {
                         } else {
                             "Switch to dark mode"
                         };
-                        let btn = egui::Button::new(
-                            RichText::new(if dark { "Light" } else { "Dark" })
-                                .size(11.0)
-                                .color(p.muted),
-                        )
-                        .fill(p.panel)
-                        .stroke(egui::Stroke::new(1.0, p.border));
-                        if ui.add(btn).on_hover_text(label).clicked() {
+                        let (rect, resp) =
+                            ui.allocate_exact_size(vec2(28.0, 28.0), egui::Sense::click());
+                        resp.widget_info(|| {
+                            egui::WidgetInfo::labeled(egui::Role::Button, true, label)
+                        });
+                        let stroke = if resp.hovered() { p.accent } else { p.border };
+                        ui.painter().rect(
+                            rect,
+                            8,
+                            p.panel,
+                            egui::Stroke::new(1.0, stroke),
+                            egui::StrokeKind::Inside,
+                        );
+                        // Icon shows the mode you switch TO: sun in dark mode, moon in light mode.
+                        widgets::theme_icon(ui, rect.shrink(7.0), p.muted, !dark, p.panel);
+                        if resp
+                            .on_hover_text(label)
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                        {
                             self.set_theme(if dark { Theme::Light } else { Theme::Dark });
                         }
                         if ui

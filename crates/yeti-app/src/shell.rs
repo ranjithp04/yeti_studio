@@ -46,8 +46,8 @@ pub fn mini_viewport_id() -> ViewportId {
 pub fn mini_viewport_builder() -> ViewportBuilder {
     ViewportBuilder::default()
         .with_title(MINI_TITLE)
-        .with_inner_size([380.0, 240.0])
-        .with_min_inner_size([340.0, 220.0])
+        .with_inner_size([380.0, 188.0])
+        .with_min_inner_size([340.0, 188.0])
         .with_resizable(false)
         .with_always_on_top()
 }

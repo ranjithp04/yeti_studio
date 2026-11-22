@@ -248,6 +248,27 @@ pub fn secondary_button(p: &Palette, text: &str) -> egui::Button<'static> {
         .min_size(vec2(0.0, 36.0))
 }
 
+/// Sun (`moon == false`) or crescent moon icon, stroked/filled in `color` on `bg`.
+pub fn theme_icon(ui: &Ui, rect: Rect, color: Color32, moon: bool, bg: Color32) {
+    let painter = ui.painter();
+    let c = rect.center();
+    let r = rect.width().min(rect.height()) / 2.0;
+    if moon {
+        painter.circle_filled(c, r * 0.8, color);
+        painter.circle_filled(c + egui::vec2(r * 0.4, -r * 0.3), r * 0.7, bg);
+    } else {
+        painter.circle_stroke(c, r * 0.4, egui::Stroke::new(1.5, color));
+        for i in 0..8 {
+            let a = i as f32 * std::f32::consts::FRAC_PI_4;
+            let d = egui::vec2(a.cos(), a.sin());
+            painter.line_segment(
+                [c + d * r * 0.62, c + d * r * 0.95],
+                egui::Stroke::new(1.5, color),
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

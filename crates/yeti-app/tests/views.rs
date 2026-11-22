@@ -252,7 +252,7 @@ fn mini_window_mute_preset_and_theme() {
     settle(&mut h);
     assert_eq!(e.preset(), Preset::Meeting);
 
-    h.get_by_label("Light").click(); // sun button in dark mode switches to light
+    h.get_by_label("Switch to light mode").click(); // sun icon in dark mode
     settle(&mut h);
     assert_eq!(h.state().config.theme, Theme::Light);
 
