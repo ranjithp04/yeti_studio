@@ -18,7 +18,7 @@ fn main() {
         match yeti_device::macos::list_devices() {
             Ok(devs) => {
                 for d in devs {
-                    let mark = if d.name.contains(yeti_device::YETI_NAME) {
+                    let mark = if yeti_device::is_yeti_name(&d.name) {
                         "*"
                     } else {
                         " "

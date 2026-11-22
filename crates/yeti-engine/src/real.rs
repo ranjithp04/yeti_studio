@@ -6,6 +6,7 @@
 
 use crate::pipeline::{
     Control, OutputSel, Pipeline, PipelineInfo, PipelineSpec, TEST_TONE_INPUT, find_device,
+    find_yeti_name,
 };
 use crate::{Engine, EngineConfig};
 use std::collections::VecDeque;
@@ -14,7 +15,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
-use yeti_device::{DeviceControl, YETI_NAME};
+use yeti_device::DeviceControl;
 use yeti_types::{
     AbState, AbVariant, DeviceCommand, DeviceEvent, DeviceState, DspParams, EngineEvent,
     EngineStats, EngineStatus, MeterSnapshot, MonitorSettings, Preset, Result, WaveformSnapshot,
@@ -427,10 +428,16 @@ impl Supervisor {
         let Some(cfg) = self.want.clone() else { return };
         self.sh.set_status(EngineStatus::Starting);
         let host = cpal::default_host();
-        let input = cfg
-            .input_device
-            .clone()
-            .unwrap_or_else(|| YETI_NAME.to_string());
+        let input = match cfg.input_device.clone() {
+            Some(n) => n,
+            None => match find_yeti_name(&host, true) {
+                Some(n) => n,
+                None => {
+                    self.sh.set_status(EngineStatus::WaitingForDevice);
+                    return;
+                }
+            },
+        };
         if input != TEST_TONE_INPUT && find_device(&host, &input, true).is_none() {
             self.sh.set_status(EngineStatus::WaitingForDevice);
             return;
@@ -445,8 +452,7 @@ impl Supervisor {
             Some("none") => None,
             Some("default") => Some(OutputSel::Default),
             Some(n) => Some(OutputSel::Named(n.to_string())),
-            None => find_device(&host, YETI_NAME, false)
-                .map(|_| OutputSel::Named(YETI_NAME.to_string())),
+            None => find_yeti_name(&host, false).map(OutputSel::Named),
         };
         let spec = PipelineSpec {
             input,

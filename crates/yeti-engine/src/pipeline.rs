@@ -204,6 +204,19 @@ pub fn find_device(host: &cpal::Host, name: &str, input: bool) -> Option<cpal::D
     list.into_iter().nth(idx)
 }
 
+/// The Yeti's actual device name as cpal sees it (input or output side), e.g.
+/// "Yeti Stereo Microphone" on macOS or "Microphone (Yeti Classic)" on Windows.
+pub fn find_yeti_name(host: &cpal::Host, input: bool) -> Option<String> {
+    let list: Vec<cpal::Device> = if input {
+        host.input_devices().ok()?.collect()
+    } else {
+        host.output_devices().ok()?.collect()
+    };
+    list.iter()
+        .map(dev_name)
+        .find(|n| yeti_device::is_yeti_name(n))
+}
+
 fn resolve_output(host: &cpal::Host, sel: &OutputSel) -> Option<cpal::Device> {
     match sel {
         OutputSel::Default => host.default_output_device(),

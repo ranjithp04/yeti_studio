@@ -29,10 +29,10 @@ fn contains_ci(haystack: &str, needle: &str) -> bool {
 
 /// `true` if an endpoint with this friendly name / interface name belongs to the Blue Yeti.
 ///
-/// Matches [`crate::YETI_NAME`] case-insensitively in either name, so a user-renamed endpoint
-/// ("Streaming Mic (Yeti Stereo Microphone)") is still found.
+/// Matches any of [`crate::YETI_NAMES`] case-insensitively in either name, so a user-renamed
+/// endpoint ("Streaming Mic (Yeti Stereo Microphone)") is still found.
 pub fn is_yeti_endpoint(friendly_name: &str, interface_name: &str) -> bool {
-    contains_ci(interface_name, crate::YETI_NAME) || contains_ci(friendly_name, crate::YETI_NAME)
+    crate::is_yeti_name(interface_name) || crate::is_yeti_name(friendly_name)
 }
 
 /// `true` if a **render** endpoint is VB-CABLE's "CABLE Input".
@@ -74,6 +74,11 @@ mod tests {
         ));
         // User renamed the description; interface name still identifies it.
         assert!(is_yeti_endpoint("Streaming Mic", "Yeti Stereo Microphone"));
+        // Windows with Logitech's driver names the same Yeti (046d:0ab7) "Yeti Classic".
+        assert!(is_yeti_endpoint("Microphone (Yeti Classic)", ""));
+        assert!(is_yeti_endpoint("Speakers (Yeti Classic)", ""));
+        assert!(!is_yeti_endpoint("Microphone (HD Pro Webcam C920)", ""));
+        assert!(!is_yeti_endpoint("Yeti Studio Mic", ""));
         // Interface name missing; friendly name still carries it.
         assert!(is_yeti_endpoint("Microphone (YETI STEREO MICROPHONE)", ""));
         assert!(!is_yeti_endpoint(

@@ -247,7 +247,7 @@ fn scan() -> Ids {
     let devs = list_devices().unwrap_or_default();
     let mut yetis: Vec<_> = devs
         .into_iter()
-        .filter(|d| d.name.contains(YETI_NAME))
+        .filter(|d| crate::is_yeti_name(&d.name))
         .collect();
     // Prefer USB transport (a renamed aggregate/virtual device should never win).
     yetis.sort_by_key(|d| !d.usb);

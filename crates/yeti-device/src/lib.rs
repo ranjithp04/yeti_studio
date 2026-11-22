@@ -20,8 +20,18 @@ pub mod windows;
 
 pub use mock::MockDevice;
 
-/// Substring used to recognise the Yeti in OS device names.
+/// Default display name of the Yeti (its macOS CoreAudio name).
 pub const YETI_NAME: &str = "Yeti Stereo Microphone";
+/// Names the same Yeti (USB `046d:0ab7`) is known by: macOS/generic driver, and Windows
+/// with Logitech's driver ("Microphone (Yeti Classic)").
+pub const YETI_NAMES: &[&str] = &["Yeti Stereo Microphone", "Yeti Classic"];
+
+/// `true` if an OS device name belongs to the Yeti (case-insensitive substring of any of
+/// [`YETI_NAMES`]).
+pub fn is_yeti_name(name: &str) -> bool {
+    let n = name.to_lowercase();
+    YETI_NAMES.iter().any(|y| n.contains(&y.to_lowercase()))
+}
 /// USB vendor id (Logitech, post-acquisition Blue Yeti).
 pub const YETI_USB_VID: u16 = 0x046d;
 /// USB product id.

@@ -38,7 +38,10 @@ fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(10.0);
     let output = match arg("--output").as_deref() {
-        None | Some("yeti") => Some(yeti_device::YETI_NAME.to_string()),
+        None | Some("yeti") => Some(
+            yeti_engine::pipeline::find_yeti_name(&cpal::default_host(), false)
+                .unwrap_or_else(|| yeti_device::YETI_NAME.to_string()),
+        ),
         // Automatic routing (as the app): virtual mic, or nothing if it is not installed.
         Some("auto") => None,
         Some(o) => Some(o.to_string()),
