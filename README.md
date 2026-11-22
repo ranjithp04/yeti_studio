@@ -25,7 +25,7 @@ Built for two situations: **gaming voice chat** (lowest delay) and **meetings** 
 | Platform | State |
 |---|---|
 | macOS (Apple Silicon, macOS 27) | Working end to end: app, voice chain, virtual mic driver. Tested with a real Yeti. |
-| Windows | Compiles (cross-checked with `cargo-xwin`); **not yet run on Windows**. Uses [VB-CABLE](https://vb-audio.com/Cable/) as the virtual mic. |
+| Windows | Builds (cross-compiled from macOS with `cargo-xwin`, including DeepFilterNet); **not yet run on Windows**. Uses [VB-CABLE](https://vb-audio.com/Cable/) as the virtual mic. |
 
 Builds are **unsigned** (ad-hoc on macOS). See [Limitations](#limitations).
 
@@ -44,7 +44,8 @@ Details: [`docs/LATENCY.md`](docs/LATENCY.md), [`docs/DSP_RESULTS.md`](docs/DSP_
 
 - Rust **1.100+** (`rustup`), Xcode command-line tools on macOS.
 - `meson` and `ninja` for the echo-cancellation build (`brew install meson ninja`).
-- Optional: `cargo install cargo-xwin` to cross-check the Windows build from macOS.
+- Optional: `cargo install cargo-xwin` and `brew install llvm` to cross-build for Windows from macOS
+  (`PATH="$(brew --prefix llvm)/bin:$PATH" cargo xwin build --release --target x86_64-pc-windows-msvc -p yeti-app`).
 
 ## Build and run (macOS)
 
@@ -125,7 +126,7 @@ cargo xtask check-windows
 ## Limitations
 
 - Unsigned builds: macOS may ask again for microphone permission after a rebuild; distributing to others needs an Apple Developer ID (and notarization), and a Windows code-signing certificate.
-- Windows has never been run on real hardware; DeepFilterNet's Windows build is not verified.
+- Windows has never been run on real hardware; DeepFilterNet compiles and links for Windows, but its runtime and CPU cost there are unmeasured.
 - The pattern knob and analog gain knob are hardware-only.
 - Global hotkeys are consumed system-wide (a push-to-talk key does not reach the game).
 
