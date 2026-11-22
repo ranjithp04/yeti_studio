@@ -10,14 +10,17 @@ publish.workspace = true
 [features]
 default = ["dfn"]
 # DeepFilterNet via libDF + tract (verified by the Phase 0 spike, spikes/dfn_spike).
-dfn = ["dep:log", "dep:deep_filter", "dep:ndarray", "dep:tract-core", "dep:tract-onnx", "dep:tract-pulse", "dep:tract-hir"]
+dfn = ["dep:deep_filter", "dep:ndarray", "dep:tract-core", "dep:tract-onnx", "dep:tract-pulse", "dep:tract-hir"]
 # WebRTC echo cancellation (Meeting). Needs meson+ninja + C++ toolchain. OFF for Windows
-# until built on real Windows. Phase 4 (DSP engineer) adds the webrtc-audio-processing dep here.
-aec = []
+# until built on real Windows.
+aec = ["dep:webrtc-audio-processing"]
 
 [dependencies]
 yeti-types = { workspace = true }
-log = { workspace = true, optional = true }
+# RNNoise (pure Rust), always available: low-CPU NS and fallback when `dfn` is off.
+nnnoiseless = { workspace = true }
+# WAV I/O for the offline tools (yeti-render, yeti-dsp-bench) and fixture tests.
+hound = { workspace = true }
 deep_filter = { workspace = true, optional = true }
 ndarray = { workspace = true, optional = true }
 # Exact pins only (not used directly): force tract to the version libDF compiles against.
@@ -25,6 +28,15 @@ tract-core = { workspace = true, optional = true }
 tract-onnx = { workspace = true, optional = true }
 tract-pulse = { workspace = true, optional = true }
 tract-hir = { workspace = true, optional = true }
+webrtc-audio-processing = { workspace = true, optional = true }
+
+[[bin]]
+name = "yeti-render"
+path = "src/bin/yeti-render.rs"
+
+[[bin]]
+name = "yeti-dsp-bench"
+path = "src/bin/yeti-dsp-bench.rs"
 
 [lints]
 workspace = true

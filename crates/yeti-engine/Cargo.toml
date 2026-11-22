@@ -16,6 +16,28 @@ aec = ["yeti-dsp/aec"]
 yeti-types = { workspace = true }
 yeti-device = { workspace = true }
 yeti-dsp = { workspace = true, default-features = false }
+cpal = { workspace = true }
+rtrb = { workspace = true }
+rubato = { workspace = true }
+log = { workspace = true }
+# Only enforced in debug builds (callbacks wrapped in `assert_no_alloc`); the binaries
+# install the `AllocDisabler` global allocator under `cfg(debug_assertions)`.
+assert_no_alloc = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Self-excluding system-audio tap for the AEC reference (src/mac_tap.rs).
+objc2 = { workspace = true }
+objc2-foundation = { workspace = true }
+objc2-core-foundation = { workspace = true }
+objc2-core-audio = { workspace = true }
+
+[[bin]]
+name = "yeti-probe"
+path = "src/bin/yeti_probe.rs"
+
+[[bin]]
+name = "yeti-passthrough"
+path = "src/bin/yeti_passthrough.rs"
 
 [lints]
 workspace = true

@@ -2,8 +2,8 @@
 //!
 //! Owner: **Device & engine engineer**.
 //!
-//! The UI (`yeti-app`) only talks to `Arc<dyn Engine>`; build it against [`MockEngine`]
-//! until [`YetiEngine`] is implemented. Pipeline (PLAN.md §3):
+//! The UI (`yeti-app`) only talks to `Arc<dyn Engine>`: [`YetiEngine`] in the app,
+//! [`MockEngine`] for UI development and tests. Pipeline (PLAN.md §3):
 //! `Yeti → capture (cpal) → SPSC ring → DSP thread → SPSC ring → output (cpal) → virtual mic`,
 //! plus meter/waveform taps, monitor ("hear myself") and loopback AEC reference.
 //!
@@ -18,22 +18,46 @@ use yeti_types::{
     EngineStatus, MeterSnapshot, MonitorSettings, Preset, Result, WaveformSnapshot,
 };
 
+pub mod ab;
+pub mod drift;
+#[cfg(target_os = "macos")]
+pub mod mac_feed;
+#[cfg(target_os = "macos")]
+pub mod mac_tap;
 mod mock;
+pub mod pipeline;
 mod real;
+pub mod resample;
+mod rt_priority;
+pub mod telemetry;
+/// Windows routing: VB-CABLE output, Yeti endpoints, WASAPI loopback (Windows engineer).
+#[cfg(windows)]
+pub mod windows_routing;
 
 pub use mock::MockEngine;
-pub use real::YetiEngine;
+pub use real::{EngineDiagnostics, MAC_FEED_DEVICE, WIN_FEED_DEVICE, YetiEngine};
 
 /// Where audio goes. `None` fields = automatic choice.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct EngineConfig {
-    /// Capture device name; `None` = first device matching the Yeti.
+    /// Capture device name (substring match); `None` = first device matching the Yeti.
     pub input_device: Option<String>,
-    /// Virtual mic feed device; `None` = platform default
-    /// (mac: "Yeti Studio Mic (Feed)", win: "CABLE Input (VB-Audio Virtual Cable)").
+    /// Virtual mic feed device (name, substring match); `None` = platform default
+    /// (mac: "Yeti Studio Mic (Feed)", opened by UID through a private aggregate because the
+    /// driver hides it; win: "CABLE Input (VB-Audio Virtual Cable)"). If it is not installed a
+    /// `Warning` event is queued and: mac → the system default output is used instead;
+    /// win → no main output (VB-CABLE install message).
+    /// Special values: `"default"` = system default output, `"none"` = no main output.
     pub output_device: Option<String>,
-    /// Monitor ("hear myself") device; `None` = Yeti headphone output.
+    /// Monitor ("hear myself") device; `None` = Yeti headphone output (`"none"` / `"default"`
+    /// as for `output_device`). The stream runs while the engine runs; audio is only sent
+    /// while `MonitorSettings::enabled`.
     pub monitor_device: Option<String>,
+    /// Callback buffer size in frames; `None` = device default.
+    pub buffer_frames: Option<u32>,
+    /// Loopback reference capture (AEC far end): `None` = automatic (echo cancel enabled
+    /// and `aec` compiled in), `Some(b)` = force on/off (diagnostics).
+    pub capture_reference: Option<bool>,
 }
 
 /// Handle the UI uses to drive the audio engine. Object-safe: use `Arc<dyn Engine>`.

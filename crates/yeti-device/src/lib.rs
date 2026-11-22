@@ -11,6 +11,7 @@
 use std::sync::Arc;
 use yeti_types::{DeviceCommand, DeviceEvent, DeviceState, Result};
 
+pub mod endpoint_names;
 #[cfg(target_os = "macos")]
 pub mod macos;
 mod mock;
@@ -84,5 +85,19 @@ pub fn open_yeti() -> Result<Box<dyn DeviceControl>> {
     #[cfg(not(any(target_os = "macos", windows)))]
     {
         Err(yeti_types::YetiError::Unsupported("platform"))
+    }
+}
+
+/// Like [`open_yeti`], but on macOS succeeds while the Yeti is unplugged
+/// (`state().connected == false`) and fires `Connected` when it appears, so the engine can
+/// wait for the device. Other platforms fall back to [`open_yeti`].
+pub fn watch_yeti() -> Result<Box<dyn DeviceControl>> {
+    #[cfg(target_os = "macos")]
+    {
+        macos::CoreAudioYeti::watch().map(|d| Box::new(d) as Box<dyn DeviceControl>)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        open_yeti()
     }
 }

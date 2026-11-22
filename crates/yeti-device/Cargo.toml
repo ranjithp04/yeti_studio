@@ -12,7 +12,7 @@ yeti-types = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-core-audio = { workspace = true }
-# Phase 1 likely adds: objc2-core-audio-types, objc2-core-foundation (pinned in workspace).
+objc2-core-foundation = { workspace = true, features = ["CFString"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = [
@@ -22,7 +22,11 @@ windows = { workspace = true, features = [
     "Win32_System_Com",
     "Win32_UI_Shell_PropertiesSystem",
     "Win32_Devices_FunctionDiscovery",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
 ] }
+windows-core = { workspace = true }
+log = { workspace = true }
 
 [lints]
 workspace = true

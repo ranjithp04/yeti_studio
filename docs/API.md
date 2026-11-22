@@ -46,9 +46,18 @@ and noted in your report.
 `set_sample_rate` (Windows → `Unsupported`), `set_event_callback(Option<Arc<dyn Fn(DeviceEvent)>>)`,
 provided `apply(DeviceCommand)`.
 - `open_yeti() -> Result<Box<dyn DeviceControl>>` picks `macos::CoreAudioYeti` / `windows::WasapiYeti` (stubs → `NotImplemented`).
+- `watch_yeti()` (additive): like `open_yeti` but on macOS succeeds while the Yeti is unplugged
+  (`state().connected == false`) and fires `Connected` on plug-in; other platforms = `open_yeti`.
+  macOS backend implemented (Phase 1); `macos::list_devices()` for diagnostics.
 - `MockDevice` = working in-memory implementation (+ `set_connected` to simulate hot-plug).
 - Setters validate and return `OutOfRange`; never called from audio callbacks.
 - Identification constants: `YETI_NAME`, `YETI_USB_VID` (0x046d), `YETI_USB_PID` (0x0ab7).
+- Windows (Phase 6): `windows::WasapiYeti` (endpoint volume/mute, rate read-only), helpers
+  `list_endpoints`, `find_vb_cable_input`, `vb_cable_input`, `default_render_endpoint`;
+  platform-free `endpoint_names` (Yeti / VB-CABLE name matching, `VB_CABLE_MISSING_MESSAGE`,
+  `VB_CABLE_DOWNLOAD_URL`). Engine side: `yeti_engine::windows_routing` (`virtual_mic_output`,
+  `yeti_capture_device`, `yeti_headphone_device`, `start_loopback_reference`,
+  `reference_includes_monitor`). Not yet run on Windows.
 
 ## `yeti-dsp::Processor` (trait) and `VoiceChain`
 
@@ -68,6 +77,14 @@ pub trait Processor {
   `aec_available()`, `dfn_available()`. Current stub = passthrough + output mute.
 - `dfn::DfnSuppressor` (feature `dfn`): working DFN3 wrapper (`new`, `set_strength`, `last_lsnr_db`).
 - Features: `dfn` (default) and `aec` (empty until Phase 4 adds `webrtc-audio-processing`).
+- **Phase 2/4 update (DSP engineer):** the chain is implemented (AEC → HPF → NS → gate → EQ/de-esser →
+  auto-level → limiter). `aec` now pulls `webrtc-audio-processing` (bundled). Additions:
+  `latency_frames()`, `active_noise_model() -> ActiveNs` (DFN falls back to RNNoise if unavailable),
+  `dfn_error()`, `aec_error()`, `echo_cancel_active()`. `VoiceChain::new` loads both NS models
+  (~0.2 s) and the APM, so `set_params` never reloads. NS/AEC run only on full 480-frame blocks.
+  Latency (48 kHz frames): DFN 1440, RNNoise 480, limiter 48, AEC 430 (when echo cancel on).
+  `ChainMetrics.voice_probability` comes from the NS model (RNNoise VAD / DFN lsnr heuristic).
+  Offline tools: `yeti-render`, `yeti-dsp-bench`; results in `docs/DSP_RESULTS.md`.
 
 ## `yeti-engine::Engine` (trait, `Send + Sync`, object-safe; UI holds `Arc<dyn Engine>`)
 
@@ -84,25 +101,65 @@ pub trait Processor {
 All methods `&self`, non-blocking, cheap. `EngineConfig { input_device, output_device, monitor_device }` (`None` = auto).
 - `MockEngine`: full fake (time-varying synthetic meters/waveform, presets → Custom detection,
   A/B timing, `simulate_connected(bool)` for hot-plug, backed by `MockDevice`). Use it for Phase 3.
-- `YetiEngine`: real engine stub (`start` → `NotImplemented`).
+- `YetiEngine` (Phase 1, device & engine engineer): real cpal engine. `start` is non-blocking
+  (queues to a supervisor thread; watch `status()`/`poll_events()`: `Starting` → `Running` /
+  `WaitingForDevice` / `Error`). Hot-plug: Yeti unplug → `WaitingForDevice`, replug → restarts.
+  A/B test (`ab.rs`): `ab_record(0.5..=60 s)` records raw + cleaned (pre-mute) on the DSP worker
+  (buffers allocated by the caller, worker uses `try_lock`); `ab_play` plays a take through the
+  monitor output (Yeti headphones; error if no monitor device), replacing the live monitor signal;
+  `EngineEvent::AbReady` when a take finishes. Requires `Running`.
+  - `EngineConfig` (additive fields): `buffer_frames: Option<u32>`, `capture_reference: Option<bool>`
+    (`None` = auto: echo cancel on **and** `aec` built). Device names are substring matches;
+    `output_device`/`monitor_device` accept `"default"` (system output) and `"none"`.
+    `output_device: None` = virtual mic. macOS: "Yeti Studio Mic (Feed)" by name, else by UID
+    (`mac_feed::FEED_DEVICE_UID`) wrapped in a private aggregate (`mac_feed::DeviceAlias`) since
+    the Feed is hidden; if the driver is absent → **system default output** + `EngineEvent::Warning`
+    (Integrator decision; feedback risk on speakers is stated in the warning). Windows:
+    `windows_routing::virtual_mic_output` ("CABLE Input"); if absent → no main output + `Warning`
+    with `endpoint_names::VB_CABLE_MISSING_MESSAGE`. `input_device: Some("test-tone")`
+    = synthetic 440 Hz source (no mic/TCC), for tests.
+  - Extras on the concrete type: `diagnostics() -> EngineDiagnostics` (pipeline info, ring fills,
+    output overruns/resyncs, monitor/reference drift, reference level, `reference_excludes_self`),
+    `set_bypass_chain(bool)`.
+  - Telemetry: waveform = 200 buckets × 20 ms; meters are per 10 ms block.
+  - Bins: `yeti-probe [--list]`, `yeti-passthrough [--seconds N] [--input NAME|test-tone]
+    [--output NAME|yeti|default|none] [--audible] [--monitor] [--bypass] [--reference] [--buffer N]`.
+  - Apps embedding the engine may install `assert_no_alloc::AllocDisabler` as global allocator in
+    debug builds; cpal callbacks are wrapped in `assert_no_alloc`.
+
+## `yeti-app`
+
+lib (`yeti_app`) + bin `yeti-studio`. Default engine = `YetiEngine`; `--mock` = `MockEngine`
+(UI development, tests use it). Flags: `--mock`, `--mini`, `--hidden`, `--quit-after SECS`,
+`--config PATH`, `--no-tray`, `--no-hotkeys`, `--input NAME|test-tone`,
+`--output NAME|default|none`, `--monitor NAME|default|none` (→ `EngineConfig`).
+On macOS the app enables `aec` through a target-specific dependency (Meeting preset echo cancel);
+Windows builds keep it off.
 
 ## `yeti-driver-mac`
 
-cdylib + rlib. Exports `YetiStudioMic_Create(CFAllocatorRef, CFUUIDRef) -> *mut c_void` (stub returns NULL).
-Constants `MIC_DEVICE_NAME` = "Yeti Studio Mic", `FEED_DEVICE_NAME` = "Yeti Studio Mic (Feed)", `BUNDLE_ID`.
+cdylib + rlib. Exports `YetiStudioMic_Create(CFAllocatorRef, CFUUIDRef) -> *mut c_void` (CFPlugIn factory,
+Phase 5: implemented, hand-written FFI, no deps).
+Constants `MIC_DEVICE_NAME` = "Yeti Studio Mic", `FEED_DEVICE_NAME` = "Yeti Studio Mic (Feed)", `BUNDLE_ID`,
+`MIC_DEVICE_UID` = "YetiStudioMic_UID", `FEED_DEVICE_UID` = "YetiStudioMicFeed_UID", `FACTORY_UUID`.
 Empty on non-macOS; excluded from Windows checks.
+- Format: 2 ch, 48 kHz, f32 interleaved, fixed. Feed (output) → Mic (input) loopback, ~2 IO buffers latency.
+- **Engine note:** the Feed device is `IsHidden = 1`, so it is NOT in `kAudioHardwarePropertyDevices`
+  (cpal's device list will not show it). Resolve it with `kAudioHardwarePropertyTranslateUIDToDevice`
+  + `FEED_DEVICE_UID`, then open that `AudioDeviceID` for output.
 
 ## Features & build matrix
 
 | Feature | Crates | Default | Windows check |
 |---|---|---|---|
 | `dfn` | yeti-dsp → yeti-engine → yeti-app | on | **off** (tract-linalg needs `llvm-lib`, absent on this Mac) |
-| `aec` | same chain | off | off |
+| `aec` | same chain | off (yeti-app on macOS: **on**) | off |
 
 ## xtask
 
 - `cargo xtask check-windows [--with-dfn]` — `cargo xwin check --target x86_64-pc-windows-msvc --no-default-features` on all crates except `yeti-driver-mac`.
-- `cargo xtask bundle-mac` — release build; bundle assembly TODO (Phase 5).
+- `cargo xtask bundle-mac [--driver-only]` — release build, assemble + ad-hoc sign + `codesign --verify` + `plutil -lint`
+  `dist/YetiStudioMic.driver` (then runs the driver harness on the signed bundle) and `dist/Yeti Studio.app`.
 - `cargo xtask install-driver` — prints sudo install/uninstall commands only.
 
 ## Gotchas found in Phase 0

@@ -15,6 +15,8 @@ pub struct DfnSuppressor {
     enh: Array2<f32>,
     /// Last local SNR estimate from the model, dB.
     pub last_lsnr_db: f32,
+    /// Number of frames where tract returned an error (input passed through unchanged).
+    pub errors: u64,
 }
 
 impl DfnSuppressor {
@@ -30,6 +32,7 @@ impl DfnSuppressor {
             enh: Array2::zeros((1, model.hop_size)),
             model,
             last_lsnr_db: 0.0,
+            errors: 0,
         })
     }
 
@@ -37,6 +40,13 @@ impl DfnSuppressor {
     pub fn set_strength(&mut self, strength: f32) {
         let s = strength.clamp(0.0, 1.0);
         self.model.set_atten_lim(6.0 + s * 94.0);
+    }
+
+    /// Heuristic voice probability from the model's local SNR estimate: logistic centred
+    /// at −7 dB. Calibrated on the TTS + keyboard/fan fixture at 5 dB SNR, where DFN reports
+    /// lsnr ≈ −15 dB (p50) on noise-only frames and p10/p50/p90 = −9.6/+2.8/+9.2 dB on speech.
+    pub fn voice_probability(&self) -> f32 {
+        1.0 / (1.0 + (-(self.last_lsnr_db + 7.0) / 2.5).exp())
     }
 }
 
@@ -55,8 +65,9 @@ impl Processor for DfnSuppressor {
     fn process(&mut self, block: &mut [f32]) {
         let n = block.len().min(self.model.hop_size);
         self.noisy.fill(0.0);
+        // libDF logs a warning for every frame with |x| > 0.9999: clamp just below.
         for (d, s) in self.noisy.iter_mut().zip(block.iter()) {
-            *d = *s;
+            *d = s.clamp(-0.9999, 0.9999);
         }
         match self.model.process(self.noisy.view(), self.enh.view_mut()) {
             Ok(lsnr) => {
@@ -65,14 +76,16 @@ impl Processor for DfnSuppressor {
                     *d = *s;
                 }
             }
-            Err(e) => log::error!("DFN process failed: {e}"),
+            // No logging on the DSP thread: count, keep the input (engine/UI can report it).
+            Err(_) => self.errors += 1,
         }
     }
     fn reset(&mut self) {
         let _ = self.model.init();
     }
     fn latency_frames(&self) -> usize {
-        // STFT overlap + model lookahead (estimate; DSP engineer to measure in Phase 2).
+        // STFT overlap + model lookahead = 1440 frames (30 ms) for DFN3. Confirmed by
+        // cross-correlation in `tests/fixture_quality.rs` and `yeti-dsp-bench`.
         (self.model.fft_size - self.model.hop_size) + self.model.lookahead * self.model.hop_size
     }
 }

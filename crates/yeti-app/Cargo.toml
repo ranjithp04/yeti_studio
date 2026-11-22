@@ -11,6 +11,10 @@ publish.workspace = true
 name = "yeti-studio"
 path = "src/main.rs"
 
+[lib]
+name = "yeti_app"
+path = "src/lib.rs"
+
 [features]
 default = ["dfn"]
 dfn = ["yeti-engine/dfn"]
@@ -20,8 +24,21 @@ aec = ["yeti-engine/aec"]
 yeti-types = { workspace = true }
 yeti-engine = { workspace = true, default-features = false }
 env_logger = { workspace = true }
-# Phase 3 (UI engineer) adds: eframe, egui, tray-icon, global-hotkey, directories, serde, toml
-# — all `{ workspace = true }` (versions pinned in the workspace manifest).
+log = { workspace = true }
+serde = { workspace = true }
+toml = { workspace = true }
+directories = { workspace = true }
+eframe = { workspace = true }
+tray-icon = { workspace = true }
+global-hotkey = { workspace = true }
+
+# Echo cancel (Meeting preset) is on for macOS builds of the app (PLAN §3: `aec` stays off
+# for the Windows target until it is built on real Windows).
+[target.'cfg(target_os = "macos")'.dependencies]
+yeti-engine = { workspace = true, default-features = false, features = ["aec"] }
+
+[dev-dependencies]
+egui_kittest = { workspace = true }
 
 [lints]
 workspace = true

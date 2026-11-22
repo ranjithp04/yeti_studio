@@ -45,10 +45,34 @@ tract-onnx = "=0.21.4"
 tract-pulse = "=0.21.4"
 tract-hir = "=0.21.4"
 ndarray = "0.15.6"
+nnnoiseless = { version = "0.5.2", default-features = false }
+# feature `aec` only (yeti-dsp); bundled build needs meson+ninja + C++ toolchain.
+webrtc-audio-processing = { version = "2.1.0", features = ["bundled"] }
+hound = "3.5.1"
 
 # platform (yeti-device, yeti-driver-mac)
 objc2-core-audio = "0.3.2"
+objc2-core-foundation = "0.3.2"
+# yeti-engine mac_tap.rs (self-excluding Core Audio process tap); same versions cpal uses.
+objc2 = "0.6.5"
+objc2-foundation = "0.3.2"
 windows = "0.62.2"
+# `#[implement]` (COM callbacks in yeti-device/src/windows.rs) expands to `::windows_core::...`.
+windows-core = "0.62.2"
+
+# engine (yeti-engine)
+cpal = "0.18.2"
+rtrb = "0.4.1"
+rubato = "5.1.0"
+assert_no_alloc = "1.1.2"
+
+# UI (yeti-app)
+toml = "1.2.2"
+directories = "6.0.0"
+eframe = "0.37.0"
+egui_kittest = "0.37.0"
+tray-icon = "0.26.1"
+global-hotkey = "0.10.0"
 
 # ---------------------------------------------------------------------------
 # PLANNED pins (latest on crates.io, checked 2026-11-22). Cargo 1.100 warns about
@@ -57,28 +81,14 @@ windows = "0.62.2"
 # Do not pick different versions without noting it in docs/API.md.
 #
 # anyhow = "1.0.104"
-# toml = "1.2.2"
-# hound = "3.5.1"
-# directories = "6.0.0"
 # objc2-core-audio-types = "0.3.2"
-# objc2-core-foundation = "0.3.2"
 # -- engine --
-# cpal = "0.18.2"
-# rtrb = "0.4.1"
-# rubato = "5.1.0"
 # triple_buffer = "9.0.1"
-# assert_no_alloc = "1.1.2"
 # crossbeam-channel = "0.5.17"
 # -- dsp --
 # biquad = "0.6.0"
-# nnnoiseless = { version = "0.5.2", default-features = false }
-# webrtc-audio-processing = { version = "2.1.0", features = ["bundled"] }   # feature `aec` only
-# -- ui --
-# eframe = "0.37.0"
+# -- ui -- (yeti-app uses the eframe::egui re-export)
 # egui = "0.37.0"
-# egui_kittest = "0.37.0"
-# tray-icon = "0.26.1"
-# global-hotkey = "0.10.0"
 # ---------------------------------------------------------------------------
 
 [workspace.lints.rust]
