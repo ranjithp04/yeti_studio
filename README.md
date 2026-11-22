@@ -1,6 +1,7 @@
 # Yeti Studio
 
-Clean-voice software for the **original Blue Yeti USB microphone** (USB `046d:0ab7`), written in Rust.
+Clean-voice software for the **[Yeti Premium USB Microphone](https://www.logitechg.com/en-us/shop/p/yeti-premium-usb-microphone.988-000100)**
+(Blue Yeti, part no. 988-000100; tested with USB ID `046d:0ab7`), written in Rust.
 It removes keyboard clicks, fan and wind rumble and room noise in real time and exposes the result as a
 virtual microphone ("**Yeti Studio Mic**") that Discord, Zoom, Teams, OBS or any game can use.
 
