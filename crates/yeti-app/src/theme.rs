@@ -121,6 +121,8 @@ pub fn visuals(theme: egui::Theme) -> egui::Visuals {
 
     let r = CornerRadius::same(8);
     let w = &mut v.widgets;
+    // Disabled controls stay readable (egui default 0.5 is too faint on white).
+    v.disabled_alpha = 0.7;
     w.noninteractive.bg_fill = p.panel;
     w.noninteractive.weak_bg_fill = p.panel;
     w.noninteractive.bg_stroke = Stroke::new(1.0, p.border);

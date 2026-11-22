@@ -912,7 +912,7 @@ impl YetiUi {
         });
         card(p).inner_margin(10).corner_radius(8).show(ui, |ui| {
             ui.set_width(ui.available_width());
-            muted(ui, p, "Tip: set the pattern knob to Cardioid and talk into the front. The analog gain knob is not software-controllable.");
+            para(ui, p, "Tip: set the pattern knob to Cardioid and talk into the front. The analog gain knob is not software-controllable.");
         });
         ui.add_space(10.0);
 
@@ -1087,17 +1087,16 @@ impl YetiUi {
                 "Not available in this build (needs the `aec` feature)."
             };
             let ec_text = if pr.echo_cancel.enabled { "On" } else { "Off" };
+            let desc = format!("{desc}\nStatus: {ec_text}");
             stage_card(
                 &mut cols[2],
                 p,
                 6,
                 "Echo cancel",
-                desc,
+                &desc,
                 &mut pr.echo_cancel.enabled,
                 aec,
-                |ui| {
-                    muted(ui, p, ec_text);
-                },
+                |_ui| {},
             );
         });
         self.set_params(pr);
@@ -1139,7 +1138,7 @@ impl YetiUi {
             ui,
             p,
             format!(
-                "Noise removed while talking: {} · Gain: {:+.1} dB · Gate: {} · Voice: {:.0}%",
+                "Noise removed while talking: {} · Auto-level: {:+.1} dB · Gate: {} · Voice: {:.0}%",
                 self.speech_nr_text(),
                 m.gain_change_db,
                 if m.gate_open { "open" } else { "closed" },
@@ -1168,7 +1167,7 @@ impl YetiUi {
     fn ab_ui(&mut self, ui: &mut Ui, p: &Palette) {
         ui.label(RichText::new("A/B test").size(14.0).strong());
         let secs = self.config.ab_seconds;
-        muted(
+        para(
             ui,
             p,
             format!(
@@ -1359,18 +1358,45 @@ fn stage_card(
     available: bool,
     controls: impl FnOnce(&mut Ui),
 ) {
+    // All voice-chain cards share the tallest card's height (measured last frame).
+    let key = egui::Id::unique("yeti_stage_card_height");
+    let frame = ui.ctx().cumulative_pass_nr();
+    let (f0, cur0, last0) = ui
+        .ctx()
+        .data(|d| d.get_temp::<(u64, f32, f32)>(key))
+        .unwrap_or((frame, 0.0, 160.0));
+    let (cur, last) = if f0 == frame {
+        (cur0, last0)
+    } else {
+        (0.0, cur0.max(160.0))
+    };
     card(p).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        ui.set_min_height(160.0);
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(n.to_string()).size(12.0).color(p.muted));
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                switch(ui, p, enabled, name, available);
-            });
-        });
-        ui.label(RichText::new(name).size(15.0).strong());
-        ui.label(RichText::new(desc).size(12.0).color(p.muted));
-        ui.add_enabled_ui(available && *enabled, controls);
+        ui.set_min_height(last);
+        let h = ui
+            .vertical(|ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(n.to_string()).size(12.0).color(p.muted));
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        switch(ui, p, enabled, name, available);
+                    });
+                });
+                ui.label(RichText::new(name).size(15.0).strong());
+                para(ui, p, desc);
+                ui.add_enabled_ui(available && *enabled, controls);
+            })
+            .response
+            .rect
+            .height();
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(key, (frame, cur.max(h), last)));
+    });
+}
+
+/// Wrapped muted paragraph, left-aligned (not stretched to the full width).
+fn para(ui: &mut Ui, p: &Palette, text: impl Into<String>) {
+    ui.with_layout(Layout::top_down(Align::Min), |ui| {
+        muted(ui, p, text);
     });
 }
 
@@ -1408,7 +1434,7 @@ fn fmt_khz(rate: u32) -> String {
 
 fn fmt_db(db: f32) -> String {
     if db <= yeti_types::METER_FLOOR_DB || !db.is_finite() {
-        "-inf dB".into()
+        "silent".into()
     } else {
         format!("{db:.0} dB")
     }
