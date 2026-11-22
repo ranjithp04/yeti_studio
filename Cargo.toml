@@ -17,7 +17,7 @@ version = "0.1.0"
 edition = "2024"
 # MSRV = the toolchain everything is verified on (PLAN.md §1). Do not lower without testing.
 rust-version = "1.100"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 publish = false
 
 # Shared, pinned dependency versions. Members opt in with `dep = { workspace = true }`.

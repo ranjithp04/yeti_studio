@@ -1,8 +1,11 @@
 # Rust
 /target/
 **/target/
+debug
 **/*.rs.bk
 *.pdb
+**/mutants.out*/
+rustc-ice-*.txt
 
 # Cargo.lock IS committed (binary workspace, pinned versions).
 
