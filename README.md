@@ -25,7 +25,7 @@ Built for two situations: **gaming voice chat** (lowest delay) and **meetings** 
 | Platform | State |
 |---|---|
 | macOS (Apple Silicon, macOS 27) | Working end to end: app, voice chain, virtual mic driver. Tested with a real Yeti. |
-| Windows 10/11 | Working: built natively, tested with a real Yeti (shown by Windows as "Yeti Classic") and Discord. Uses [VB-CABLE](https://vb-audio.com/Cable/) as the virtual mic. Meeting-preset echo cancellation not yet tested live on Windows. |
+| Windows 10/11 | Working: built natively, tested with a real Yeti (shown by Windows as "Yeti Classic") and Discord. Uses [VB-CABLE](https://vb-audio.com/Cable/) as the virtual mic. Meeting-preset echo cancellation verified live (sound played near the mic is removed). |
 
 Builds are **unsigned** (ad-hoc on macOS). See [Limitations](#limitations).
 
