@@ -7,7 +7,7 @@
 //! ```
 //! Defaults: 10 s, Gaming preset, output = Yeti headphone jack with **software mute on** (the
 //! full graph, rings and drift bridge run, but silence is written) so nothing can feed back
-//! into the mic. `--audible` unmutes. Exit code 0 only if xruns/overruns/underruns are all zero.
+//! into the mic. `--audible` unmutes. Exit code 0 only if xruns (after the first 2 s)/overruns/underruns are all zero.
 //!
 //! `--probe`: live end-to-end latency measurement (see `yeti_engine::probe`). The mic signal is
 //! replaced by an impulse train, the voice chain still runs (CPU), the output plays silence,
@@ -28,6 +28,9 @@ fn arg(name: &str) -> Option<String> {
         .position(|x| x == name)
         .and_then(|i| a.get(i + 1).cloned())
 }
+/// Seconds after start during which stream xruns count as startup glitches.
+const STARTUP_S: f64 = 2.0;
+
 fn flag(name: &str) -> bool {
     std::env::args().any(|x| x == name)
 }
@@ -119,8 +122,14 @@ fn main() {
     let mut max_rms = yeti_types::METER_FLOOR_DB;
     let mut sum_lin = 0.0f64;
     let mut n = 0u64;
+    // xruns while the streams start (first STARTUP_S) are reported separately: a single
+    // glitch when WASAPI/CoreAudio opens a stream is expected and not a steady-state fault.
+    let mut startup_xruns: Option<u64> = None;
     while start.elapsed().as_secs_f64() < secs {
         std::thread::sleep(Duration::from_millis(100));
+        if startup_xruns.is_none() && start.elapsed().as_secs_f64() >= STARTUP_S {
+            startup_xruns = Some(e.stats().counters.stream_xruns);
+        }
         let m = e.meters();
         max_rms = max_rms.max(m.input_rms_db);
         sum_lin += 10f64.powf(m.input_rms_db as f64 / 10.0);
@@ -178,7 +187,11 @@ fn main() {
         s.counters.blocks_processed,
         secs * 100.0
     );
-    println!("cpal xruns           : {}", s.counters.stream_xruns);
+    let startup = startup_xruns.unwrap_or(s.counters.stream_xruns);
+    let steady_xruns = s.counters.stream_xruns.saturating_sub(startup);
+    println!(
+        "cpal xruns           : {steady_xruns} after startup ({startup} during the first {STARTUP_S:.0} s, ignored)"
+    );
     println!("capture overruns     : {}", s.counters.capture_overruns);
     println!("output underruns     : {}", s.counters.output_underruns);
     println!("output overruns      : {}", d.output_overruns);
@@ -222,7 +235,7 @@ fn main() {
             d.reference_max_peak_db, d.reference_excludes_self
         );
     }
-    let clean = s.counters.stream_xruns == 0
+    let clean = steady_xruns == 0
         && s.counters.capture_overruns == 0
         && s.counters.output_underruns == 0
         && d.output_overruns == 0;
