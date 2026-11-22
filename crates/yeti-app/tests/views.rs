@@ -227,7 +227,11 @@ fn ab_test_record_then_play() {
     ));
     h.get_by_label("Stop").click();
     settle(&mut h);
-    assert!(matches!(e.ab_state(), AbState::Ready { .. }));
+    assert!(
+        matches!(e.ab_state(), AbState::Ready { .. }),
+        "after Stop: {:?}",
+        e.ab_state()
+    );
 }
 
 #[test]

@@ -41,6 +41,13 @@ pub const FIRST_RUN_TIP: &str = "Before you start: turn OFF noise suppression in
 then pick \"Yeti Studio Mic\" as the microphone there. Double processing makes voices sound robotic.";
 
 const MAX_NOTICES: usize = 3;
+/// Main window width per view (fixed); height follows the view's content.
+pub const MAIN_WIDTH: f32 = 1000.0;
+pub const PRO_WIDTH: f32 = 1280.0;
+const MAIN_MIN_HEIGHT: f32 = 400.0;
+const MAIN_MAX_HEIGHT: f32 = 1000.0;
+/// Frames used to settle the window size after a view change.
+const FIT_FRAMES: u8 = 6;
 /// Raw input peak at or above this counts as clipping.
 const CLIP_DBFS: f32 = -0.5;
 /// How long the clipping warning stays after the last clipped block.
@@ -82,6 +89,11 @@ pub struct YetiUi {
     clip_until: Option<Instant>,
     /// Noise reduction smoothed over frames where the user is talking.
     speech_nr_db: Option<f32>,
+    /// Main window: content height minus visible height this frame (largest scroll area).
+    fit_delta: f32,
+    /// View the window was last sized for, and frames left to settle that size.
+    fitted_view: Option<ViewMode>,
+    fit_frames: u8,
 }
 
 impl YetiUi {
@@ -117,6 +129,9 @@ impl YetiUi {
             gain_unlocked: false,
             clip_until: None,
             speech_nr_db: None,
+            fit_delta: 0.0,
+            fitted_view: None,
+            fit_frames: 0,
             config,
             engine,
         };
@@ -305,11 +320,48 @@ impl YetiUi {
         self.apply_theme(&ctx);
         self.refresh();
         let p = Palette::current(&ctx);
+        self.fit_delta = f32::MIN;
+        if self.fitted_view != Some(self.view) {
+            // New view: size the window to it over a few frames, then keep that size
+            // (content changes later, e.g. A/B progress, scroll instead of resizing).
+            self.fitted_view = Some(self.view);
+            self.fit_frames = FIT_FRAMES;
+        }
         match self.view {
             ViewMode::Pro => self.show_pro(ui, p),
             _ => self.show_simple(ui, p),
         }
+        self.fit_window_to_content(&ctx);
         self.schedule_repaint(&ctx);
+    }
+
+    /// Fixed-size window per view: width per view, height = the view's content.
+    fn fit_window_to_content(&mut self, ctx: &egui::Context) {
+        if self.fit_frames == 0 {
+            return;
+        }
+        self.fit_frames -= 1;
+        let target_w = if self.view == ViewMode::Pro {
+            PRO_WIDTH
+        } else {
+            MAIN_WIDTH
+        };
+        let w = ctx.content_rect().width();
+        let dh = if self.fit_delta == f32::MIN {
+            0.0
+        } else {
+            self.fit_delta
+        };
+        if dh.abs() < 1.0 && (w - target_w).abs() < 1.0 {
+            return;
+        }
+        let h = (ctx.content_rect().height() + dh).clamp(MAIN_MIN_HEIGHT, MAIN_MAX_HEIGHT);
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(target_w, h.round())));
+    }
+
+    fn track_fit<R>(&mut self, out: &egui::scroll_area::ScrollAreaOutput<R>) {
+        let d = out.content_size.y - out.inner_rect.height();
+        self.fit_delta = self.fit_delta.max(d);
     }
 
     fn status_text(&self) -> (String, bool) {
@@ -462,34 +514,37 @@ impl YetiUi {
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(p.bg).inner_margin(24))
             .show(ui, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    self.notices_ui(ui, p);
-                    self.tips_ui(ui, p);
-                    let total = ui.available_width();
-                    let right_w = 260.0;
-                    let left_w = (total - right_w - 20.0).max(300.0);
-                    ui.horizontal_top(|ui| {
-                        ui.spacing_mut().item_spacing.x = 20.0;
-                        ui.allocate_ui_with_layout(
-                            vec2(left_w, 0.0),
-                            Layout::top_down(Align::Min),
-                            |ui| {
-                                ui.set_width(left_w);
-                                ui.spacing_mut().item_spacing.y = 20.0;
-                                self.simple_left(ui, p);
-                            },
-                        );
-                        ui.allocate_ui_with_layout(
-                            vec2(right_w, 0.0),
-                            Layout::top_down(Align::Min),
-                            |ui| {
-                                ui.set_width(right_w);
-                                ui.spacing_mut().item_spacing.y = 12.0;
-                                self.simple_right(ui, p);
-                            },
-                        );
+                let out = egui::ScrollArea::vertical()
+                    .auto_shrink(false)
+                    .show(ui, |ui| {
+                        self.notices_ui(ui, p);
+                        self.tips_ui(ui, p);
+                        let total = ui.available_width();
+                        let right_w = 260.0;
+                        let left_w = (total - right_w - 20.0).max(300.0);
+                        ui.horizontal_top(|ui| {
+                            ui.spacing_mut().item_spacing.x = 20.0;
+                            ui.allocate_ui_with_layout(
+                                vec2(left_w, 0.0),
+                                Layout::top_down(Align::Min),
+                                |ui| {
+                                    ui.set_width(left_w);
+                                    ui.spacing_mut().item_spacing.y = 20.0;
+                                    self.simple_left(ui, p);
+                                },
+                            );
+                            ui.allocate_ui_with_layout(
+                                vec2(right_w, 0.0),
+                                Layout::top_down(Align::Min),
+                                |ui| {
+                                    ui.set_width(right_w);
+                                    ui.spacing_mut().item_spacing.y = 12.0;
+                                    self.simple_right(ui, p);
+                                },
+                            );
+                        });
                     });
-                });
+                self.track_fit(&out);
             });
     }
 
@@ -790,12 +845,18 @@ impl YetiUi {
                     .inner_margin(20),
             )
             .show(ui, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| self.pro_sidebar(ui, p));
+                let out = egui::ScrollArea::vertical()
+                    .auto_shrink(false)
+                    .show(ui, |ui| self.pro_sidebar(ui, p));
+                self.track_fit(&out);
             });
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(p.bg).inner_margin(20))
             .show(ui, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| self.pro_main(ui, p));
+                let out = egui::ScrollArea::vertical()
+                    .auto_shrink(false)
+                    .show(ui, |ui| self.pro_main(ui, p));
+                self.track_fit(&out);
             });
     }
 

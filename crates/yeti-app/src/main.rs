@@ -90,8 +90,9 @@ fn main() -> eframe::Result<()> {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title(MAIN_TITLE)
             .with_app_id("yeti-studio")
-            .with_inner_size([1000.0, 680.0])
-            .with_min_inner_size([820.0, 560.0]),
+            // Fixed size per view: the UI fits the height to the current view's content.
+            .with_inner_size([yeti_app::ui::MAIN_WIDTH, 640.0])
+            .with_resizable(false),
         ..Default::default()
     };
     eframe::run_native(
