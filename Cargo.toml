@@ -46,8 +46,8 @@ tract-pulse = "=0.21.4"
 tract-hir = "=0.21.4"
 ndarray = "0.15.6"
 nnnoiseless = { version = "0.5.2", default-features = false }
-# feature `aec` only (yeti-dsp); bundled build needs meson+ninja + C++ toolchain.
-webrtc-audio-processing = { version = "2.1.0", features = ["bundled"] }
+# feature `aec` (yeti-dsp): WebRTC AEC3, pure-Rust port (no C++/meson; builds on Windows).
+sonora = "0.3.0"
 hound = "3.5.1"
 
 # platform (yeti-device, yeti-driver-mac)

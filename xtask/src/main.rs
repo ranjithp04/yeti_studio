@@ -66,7 +66,8 @@ fn check_windows(with_dfn: bool) -> ExitCode {
     for p in PORTABLE {
         c.args(["-p", p]);
     }
-    // AEC is never enabled here (off for Windows until built on real Windows).
+    // AEC (sonora, pure Rust) is always checked; DFN only on request (tract needs llvm-lib).
+    c.args(["--features", "yeti-dsp/aec"]);
     if with_dfn {
         c.args(["--features", "yeti-dsp/dfn"]);
     }

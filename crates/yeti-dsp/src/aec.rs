@@ -1,22 +1,37 @@
-//! Acoustic echo cancellation (WebRTC AEC3 via `webrtc-audio-processing`, bundled), feature `aec`.
+//! Acoustic echo cancellation: WebRTC AEC3 via `sonora` (pure-Rust port of WebRTC audio
+//! processing), feature `aec`. Pure Rust, so it builds on macOS and Windows with no C++/meson.
 //!
-//! Only the echo canceller (+ its mandatory high-pass) is enabled: noise suppression and gain
-//! control are done by our own chain. 48 kHz mono, 10 ms (480-frame) frames. The far-end
-//! reference is the system playback captured via loopback (engine), one block per near block.
-//! Delay between render and capture is estimated by AEC3 itself (`stream_delay_ms: None`).
+//! Only the echo canceller (+ its high-pass) is enabled: noise suppression and gain control are
+//! done by our own chain. 48 kHz mono, 10 ms (480-frame) frames. The far-end reference is the
+//! system playback captured via loopback (engine), one block per near block. The render/capture
+//! delay is estimated by AEC3 itself.
 
 use crate::Processor;
-use webrtc_audio_processing::Processor as Apm;
-use webrtc_audio_processing::config::{Config, EchoCanceller, HighPassFilter};
+use sonora::config::{EchoCanceller, HighPassFilter};
+use sonora::{AudioProcessing, Config, StreamConfig};
 use yeti_types::{BLOCK_FRAMES, ENGINE_SAMPLE_RATE, Result, YetiError};
 
-/// Capture-path delay added by the WebRTC APM at 48 kHz (measured, see tests).
+/// Capture-path delay added by the APM at 48 kHz (measured, see tests).
 pub const AEC_LATENCY_FRAMES: usize = 430;
 
+fn build_apm() -> AudioProcessing {
+    let sc = StreamConfig::new(ENGINE_SAMPLE_RATE, 1);
+    AudioProcessing::builder()
+        .config(Config {
+            echo_canceller: Some(EchoCanceller::default()),
+            high_pass_filter: Some(HighPassFilter::default()),
+            ..Config::default()
+        })
+        .capture_config(sc)
+        .render_config(sc)
+        .build()
+}
+
 pub struct EchoCancel {
-    apm: Apm,
+    apm: AudioProcessing,
     near: [f32; BLOCK_FRAMES],
     far: [f32; BLOCK_FRAMES],
+    render_out: [f32; BLOCK_FRAMES],
     /// Frames where the APM returned an error (near passed through).
     pub errors: u64,
 }
@@ -24,22 +39,15 @@ pub struct EchoCancel {
 impl EchoCancel {
     /// Create the APM (allocates; call on the DSP worker or before starting).
     pub fn new() -> Result<Self> {
-        let apm = Apm::new(ENGINE_SAMPLE_RATE)
-            .map_err(|e| YetiError::Backend(format!("WebRTC APM create: {e}")))?;
-        apm.set_config(Config {
-            echo_canceller: Some(EchoCanceller::Full {
-                stream_delay_ms: None,
-            }),
-            high_pass_filter: Some(HighPassFilter::default()),
-            ..Config::default()
-        });
-        if apm.num_samples_per_frame() != BLOCK_FRAMES {
+        let apm = build_apm();
+        if StreamConfig::new(ENGINE_SAMPLE_RATE, 1).num_frames() != BLOCK_FRAMES {
             return Err(YetiError::Unsupported("APM frame size != 480"));
         }
         Ok(Self {
             apm,
             near: [0.0; BLOCK_FRAMES],
             far: [0.0; BLOCK_FRAMES],
+            render_out: [0.0; BLOCK_FRAMES],
             errors: 0,
         })
     }
@@ -54,20 +62,22 @@ impl EchoCancel {
             Some(f) if f.len() == BLOCK_FRAMES => self.far.copy_from_slice(f),
             _ => self.far.fill(0.0),
         }
-        if self.apm.analyze_render_frame([&self.far[..]]).is_err() {
+        if self
+            .apm
+            .process_render_f32(&[&self.far[..]], &mut [&mut self.render_out[..]])
+            .is_err()
+        {
             self.errors += 1;
         }
         self.near.copy_from_slice(near);
-        if self.apm.process_capture_frame([&mut self.near[..]]).is_ok() {
+        if self
+            .apm
+            .process_capture_f32(&[&self.near[..]], &mut [near])
+            .is_err()
+        {
             near.copy_from_slice(&self.near);
-        } else {
             self.errors += 1;
         }
-    }
-
-    /// AEC3 statistics (ERL/ERLE, delay) from the last capture frame.
-    pub fn stats(&self) -> webrtc_audio_processing::Stats {
-        self.apm.get_stats()
     }
 }
 
@@ -87,8 +97,9 @@ impl Processor for EchoCancel {
     fn process(&mut self, block: &mut [f32]) {
         self.process_with_reference(block, None);
     }
+    /// Fresh AEC state (rebuilds the APM; allocates — DSP worker only, never a callback).
     fn reset(&mut self) {
-        self.apm.reinitialize();
+        self.apm = build_apm();
     }
     fn latency_frames(&self) -> usize {
         AEC_LATENCY_FRAMES

@@ -8,12 +8,12 @@ license.workspace = true
 publish.workspace = true
 
 [features]
-default = ["dfn"]
+default = ["dfn", "aec"]
 # DeepFilterNet via libDF + tract (verified by the Phase 0 spike, spikes/dfn_spike).
 dfn = ["dep:deep_filter", "dep:ndarray", "dep:tract-core", "dep:tract-onnx", "dep:tract-pulse", "dep:tract-hir"]
 # WebRTC echo cancellation (Meeting). Needs meson+ninja + C++ toolchain. OFF for Windows
 # until built on real Windows.
-aec = ["dep:webrtc-audio-processing"]
+aec = ["dep:sonora"]
 
 [dependencies]
 yeti-types = { workspace = true }
@@ -28,7 +28,7 @@ tract-core = { workspace = true, optional = true }
 tract-onnx = { workspace = true, optional = true }
 tract-pulse = { workspace = true, optional = true }
 tract-hir = { workspace = true, optional = true }
-webrtc-audio-processing = { workspace = true, optional = true }
+sonora = { workspace = true, optional = true }
 
 [[bin]]
 name = "yeti-render"
