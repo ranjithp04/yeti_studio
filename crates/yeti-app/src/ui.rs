@@ -339,13 +339,18 @@ impl YetiUi {
             .inner_margin(3)
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
-                // Explicit left-to-right: the header places this inside a right-to-left layout.
-                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                    for (t, label) in [
+                ui.horizontal(|ui| {
+                    // Inside a right-to-left parent (Simple header) items are placed from the
+                    // right, so reverse them to always read Light · Dark · System.
+                    let mut items = [
                         (Theme::Light, "Light"),
                         (Theme::Dark, "Dark"),
                         (Theme::System, "System"),
-                    ] {
+                    ];
+                    if ui.layout().main_dir() == egui::Direction::RightToLeft {
+                        items.reverse();
+                    }
+                    for (t, label) in items {
                         let sel = self.config.theme == t;
                         let btn = egui::Button::new(
                             RichText::new(label).size(12.0).strong().color(if sel {
