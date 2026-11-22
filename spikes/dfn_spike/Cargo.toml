@@ -1,0 +1,19 @@
+[package]
+name = "dfn_spike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Standalone spike: intentionally NOT a member of the yeti workspace.
+[workspace]
+
+[dependencies]
+deep_filter = { git = "https://github.com/Rikorose/DeepFilterNet", default-features = false, features = ["tract", "default-model"] }
+hound = "3.5.1"
+ndarray = "0.15"
+# libDF declares tract ^0.21.4 but does not compile against tract >= 0.21.5x API
+# (symbol_table / type changes). Pin to upstream's lockfile version.
+tract-core = "=0.21.4"
+tract-onnx = "=0.21.4"
+tract-pulse = "=0.21.4"
+tract-hir = "=0.21.4"

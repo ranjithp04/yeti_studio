@@ -1,0 +1,23 @@
+# Rust
+/target/
+**/target/
+**/*.rs.bk
+*.pdb
+
+# Cargo.lock IS committed (binary workspace, pinned versions).
+
+# Build artefacts / bundles
+/dist/
+*.app/
+*.driver/
+
+# Spike / test outputs
+spikes/**/build.log
+spikes/**/data/enhanced*.wav
+*.profraw
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

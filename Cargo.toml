@@ -1,0 +1,119 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/yeti-types",
+    "crates/yeti-device",
+    "crates/yeti-dsp",
+    "crates/yeti-engine",
+    "crates/yeti-app",
+    "crates/yeti-driver-mac",
+    "xtask",
+]
+# Standalone spikes have their own [workspace] and are not members.
+exclude = ["spikes"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+# MSRV = the toolchain everything is verified on (PLAN.md §1). Do not lower without testing.
+rust-version = "1.100"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# Shared, pinned dependency versions. Members opt in with `dep = { workspace = true }`.
+# Cargo.lock is committed; bump versions here only, deliberately.
+[workspace.dependencies]
+# internal
+yeti-types = { path = "crates/yeti-types" }
+yeti-device = { path = "crates/yeti-device" }
+yeti-dsp = { path = "crates/yeti-dsp" }
+yeti-engine = { path = "crates/yeti-engine" }
+
+# common
+serde = { version = "1.0.229", features = ["derive"] }
+thiserror = "2.0.21"
+log = "0.4.35"
+env_logger = "0.11.12"
+
+# DSP (yeti-dsp)
+# DeepFilterNet libDF (crates.io `deep_filter` 0.2.5 is unusable). Pinned to the commit the
+# Phase 0 spike verified. libDF does NOT compile against tract 0.21.19 (API changes), so the
+# tract crates are pinned exactly to upstream's lockfile version (0.21.4).
+deep_filter = { git = "https://github.com/Rikorose/DeepFilterNet", rev = "7b14b895fe7fc42cab72b4a4c1e49c982bd6404b", default-features = false, features = ["tract", "default-model"] }
+tract-core = "=0.21.4"
+tract-onnx = "=0.21.4"
+tract-pulse = "=0.21.4"
+tract-hir = "=0.21.4"
+ndarray = "0.15.6"
+
+# platform (yeti-device, yeti-driver-mac)
+objc2-core-audio = "0.3.2"
+windows = "0.62.2"
+
+# ---------------------------------------------------------------------------
+# PLANNED pins (latest on crates.io, checked 2026-11-22). Cargo 1.100 warns about
+# unused workspace deps, so these stay commented until a crate uses them: the owner
+# moves the line above this block and adds `dep = { workspace = true }` to their crate.
+# Do not pick different versions without noting it in docs/API.md.
+#
+# anyhow = "1.0.104"
+# toml = "1.2.2"
+# hound = "3.5.1"
+# directories = "6.0.0"
+# objc2-core-audio-types = "0.3.2"
+# objc2-core-foundation = "0.3.2"
+# -- engine --
+# cpal = "0.18.2"
+# rtrb = "0.4.1"
+# rubato = "5.1.0"
+# triple_buffer = "9.0.1"
+# assert_no_alloc = "1.1.2"
+# crossbeam-channel = "0.5.17"
+# -- dsp --
+# biquad = "0.6.0"
+# nnnoiseless = { version = "0.5.2", default-features = false }
+# webrtc-audio-processing = { version = "2.1.0", features = ["bundled"] }   # feature `aec` only
+# -- ui --
+# eframe = "0.37.0"
+# egui = "0.37.0"
+# egui_kittest = "0.37.0"
+# tray-icon = "0.26.1"
+# global-hotkey = "0.10.0"
+# ---------------------------------------------------------------------------
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+debug = 1
+lto = "thin"
+
+# DSP is unusably slow unoptimised; keep dev builds fast enough for live testing.
+[profile.dev.package."*"]
+opt-level = 2
+
+# tract 0.21.4 runs extra graph checks under debug_assertions that reject the DFN3 model
+# ("duplicate name /convt3/Conv.bias"); release is fine. Disable them for tract/libDF only.
+[profile.dev.package.tract-core]
+debug-assertions = false
+[profile.dev.package.tract-hir]
+debug-assertions = false
+[profile.dev.package.tract-onnx]
+debug-assertions = false
+[profile.dev.package.tract-pulse]
+debug-assertions = false
+[profile.dev.package.tract-data]
+debug-assertions = false
+[profile.dev.package.tract-linalg]
+debug-assertions = false
+[profile.dev.package.tract-nnef]
+debug-assertions = false
+[profile.dev.package.tract-onnx-opl]
+debug-assertions = false
+[profile.dev.package.tract-pulse-opl]
+debug-assertions = false
+[profile.dev.package.deep_filter]
+debug-assertions = false

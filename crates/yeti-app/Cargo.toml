@@ -1,0 +1,27 @@
+[package]
+name = "yeti-app"
+description = "Yeti Studio desktop app (eframe): Simple / Pro / Mini views, tray, hotkeys, theme, config."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "yeti-studio"
+path = "src/main.rs"
+
+[features]
+default = ["dfn"]
+dfn = ["yeti-engine/dfn"]
+aec = ["yeti-engine/aec"]
+
+[dependencies]
+yeti-types = { workspace = true }
+yeti-engine = { workspace = true, default-features = false }
+env_logger = { workspace = true }
+# Phase 3 (UI engineer) adds: eframe, egui, tray-icon, global-hotkey, directories, serde, toml
+# — all `{ workspace = true }` (versions pinned in the workspace manifest).
+
+[lints]
+workspace = true

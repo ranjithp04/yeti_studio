@@ -1,0 +1,19 @@
+[package]
+name = "yeti-driver-mac"
+description = "macOS AudioServerPlugIn \"Yeti Studio Mic\" (YetiStudioMic.driver). macOS only."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+# cdylib = the plug-in binary inside YetiStudioMic.driver; rlib = in-process test harness.
+crate-type = ["cdylib", "rlib"]
+
+# Phase 5 (macOS driver engineer) adds, under [target.'cfg(target_os = "macos")'.dependencies]:
+# objc2-core-audio (feature AudioServerPlugIn), objc2-core-foundation — pinned in the workspace.
+[dependencies]
+
+[lints]
+workspace = true
