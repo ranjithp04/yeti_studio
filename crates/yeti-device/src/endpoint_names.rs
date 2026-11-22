@@ -41,6 +41,11 @@ pub fn is_yeti_endpoint(friendly_name: &str, interface_name: &str) -> bool {
 /// Cable A)", "Hi-Fi Cable Input (VB-Audio Hi-Fi Cable)") use different names on purpose so they
 /// are not picked up by accident.
 pub fn is_vb_cable_input(friendly_name: &str, interface_name: &str) -> bool {
+    // VB-CABLE also installs "CABLE In 16ch" on the same interface: a 16-channel endpoint
+    // that is not the stereo cable chat apps record from. Never pick it.
+    if friendly_name.to_lowercase().contains("16ch") {
+        return false;
+    }
     let iface = interface_name.trim();
     if !iface.is_empty() {
         return iface.eq_ignore_ascii_case(VB_CABLE_INTERFACE);
@@ -61,6 +66,22 @@ pub fn name_selects(name: &str, friendly_name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vb_cable_16ch_endpoint_is_rejected() {
+        assert!(is_vb_cable_input(
+            "CABLE Input (VB-Audio Virtual Cable)",
+            "VB-Audio Virtual Cable"
+        ));
+        assert!(!is_vb_cable_input(
+            "CABLE In 16ch (VB-Audio Virtual Cable)",
+            "VB-Audio Virtual Cable"
+        ));
+        assert!(!is_vb_cable_input(
+            "CABLE In 16ch (VB-Audio Virtual Cable)",
+            ""
+        ));
+    }
 
     #[test]
     fn yeti_matches_default_and_renamed_endpoints() {
